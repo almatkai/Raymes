@@ -1,0 +1,10 @@
+node_modules
+out
+dist
+.DS_Store
+*.log
+.env
+.env.*
+
+# Added by ggshield
+.cache_ggshield

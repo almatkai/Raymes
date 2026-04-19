@@ -1,0 +1,132 @@
+import type { Intent } from '../shared/intent'
+import type { ClipboardEntry, ClipboardImagePayload } from '../shared/clipboard'
+import type {
+  ExtensionIntegrityReport,
+  ExtensionManifest,
+  InstalledExtension,
+} from '../shared/extensions'
+import type { LlmConfigRecord, ProviderId } from '../shared/llmConfig'
+import type { NativeCommandDescriptor } from '../shared/nativeCommands'
+import type { PermissionId, PermissionStatus, PermissionsSnapshot } from '../shared/permissions'
+import type { SafetyDescriptor, SafetyLogEntry } from '../shared/safety'
+import type { NamedPortEntry } from '../shared/portManager'
+import type { QuickNoteEntry } from '../shared/quickNotes'
+import type { SnippetListRow, SnippetWritePayload } from '../shared/snippets'
+import type {
+  OpenPortProcess,
+  SearchAction,
+  SearchBenchmarkReport,
+  SearchExecuteContext,
+  SearchExecuteResult,
+  SearchResult,
+} from '../shared/search'
+import type { VoiceModel, VoiceModelId } from '../shared/voice'
+
+export type ProviderConnectionStatuses = Record<ProviderId, boolean>
+
+export type FrankfurterLatestResponse = {
+  base: string
+  date: string
+  rates: Record<string, number>
+}
+
+export type GithubPollResult =
+  | { status: 'authorization_pending' }
+  | { status: 'slow_down' }
+  | { status: 'success'; access_token: string; refresh_token?: string; expires_in?: number }
+  | { status: 'error'; error: string }
+
+export type RaymesApi = {
+  hide: () => Promise<void>
+  show: () => Promise<void>
+  query: (text: string) => Promise<Intent>
+  cancel: () => Promise<unknown>
+  getExtensions: () => Promise<InstalledExtension[]>
+  listInstalledExtensions: () => Promise<InstalledExtension[]>
+  searchStoreExtensions: (query: string) => Promise<ExtensionManifest[]>
+  installExtension: (extensionId: string) => Promise<InstalledExtension>
+  uninstallExtension: (extensionId: string) => Promise<boolean>
+  inspectExtension: (extensionId: string) => Promise<ExtensionIntegrityReport>
+  reinstallExtension: (extensionId: string) => Promise<ExtensionIntegrityReport>
+  getExtensionInstallError: (extensionId: string) => Promise<string | null>
+  searchAll: (query: string) => Promise<SearchResult[]>
+  runSearchBenchmark: () => Promise<SearchBenchmarkReport>
+  getSearchBenchmarkHistory: () => Promise<SearchBenchmarkReport[]>
+  listOpenPorts: () => Promise<OpenPortProcess[]>
+  listNamedPorts: () => Promise<NamedPortEntry[]>
+  addNamedPort: (payload: { name: string; port: number }) => Promise<NamedPortEntry | null>
+  removeNamedPort: (id: string) => Promise<boolean>
+  executeSearchAction: (action: SearchAction, context?: SearchExecuteContext) => Promise<SearchExecuteResult>
+  runAiAction: (payload: {
+    instruction: string
+    selectedText?: string
+    appContext?: string
+    allowAutomation?: boolean
+    redactSensitive?: boolean
+  }) => Promise<{ ok: boolean; output: string }>
+  voiceSpeak: (text: string) => Promise<{ ok: boolean }>
+  voiceStop: () => Promise<{ ok: boolean }>
+  voiceTranscribe: (payload: {
+    audioBytes: ArrayBuffer
+    mimeType?: string
+    language?: string
+  }) => Promise<
+    | { ok: true; text: string; engine: string }
+    | { ok: false; error: string; hint?: string }
+  >
+  setSuppressBlurHide: (value: boolean) => Promise<{ ok: boolean }>
+  listVoiceSttModes: () => Promise<string[]>
+  listVoiceModels: () => Promise<VoiceModel[]>
+  downloadVoiceModel: (modelId: VoiceModelId) => Promise<VoiceModel>
+  getSelectedVoiceModel: () => Promise<{ modelId: VoiceModelId }>
+  setSelectedVoiceModel: (modelId: VoiceModelId) => Promise<{ modelId: VoiceModelId }>
+  onStreamToken: (listener: (token: string) => void) => () => void
+  onStreamDone: (listener: () => void) => () => void
+  onStreamError: (listener: (message: string) => void) => () => void
+  getLlmConfig: () => Promise<LlmConfigRecord>
+  setLlmConfig: (patch: LlmConfigRecord) => Promise<void>
+  getLlmProviderStatuses: () => Promise<ProviderConnectionStatuses>
+  listLlmModels: (providerId: ProviderId) => Promise<string[]>
+  setWindowContentHeight: (height: number) => Promise<void>
+  openExternalUrl: (url: string) => Promise<void>
+  githubDeviceStart: (clientId: string) => Promise<{
+    device_code: string
+    user_code: string
+    verification_uri: string
+    expires_in: number
+    interval: number
+  }>
+  githubDevicePoll: () => Promise<GithubPollResult>
+  githubDeviceCancel: () => Promise<void>
+  onWindowShown: (listener: (payload: { resetUi: boolean }) => void) => () => void
+  /** Alt+Space held after opening the launcher — same pipeline as the Hold to speak control. */
+  onVoiceHotkeyHold: (listener: (payload: { phase: 'press' | 'release' }) => void) => () => void
+  getPermissions: () => Promise<PermissionsSnapshot>
+  requestPermission: (id: PermissionId) => Promise<PermissionStatus>
+  getSafetyDescriptors: () => Promise<SafetyDescriptor[]>
+  getSafetyLog: () => Promise<SafetyLogEntry[]>
+  clearSafetyLog: () => Promise<void>
+  getSafetyDryRun: () => Promise<boolean>
+  setSafetyDryRun: (value: boolean) => Promise<boolean>
+  getNativeCommands: () => Promise<NativeCommandDescriptor[]>
+  listClipboardEntries: () => Promise<ClipboardEntry[]>
+  restoreClipboardEntry: (id: string) => Promise<boolean>
+  deleteClipboardEntry: (id: string) => Promise<boolean>
+  toggleClipboardPin: (id: string) => Promise<boolean>
+  revealClipboardEntry: (id: string) => Promise<boolean>
+  readClipboardImage: (id: string) => Promise<ClipboardImagePayload | null>
+  clearClipboardHistory: () => Promise<void>
+  listSnippets: () => Promise<SnippetListRow[]>
+  copySnippet: (id: string) => Promise<{ ok: boolean; message: string }>
+  addSnippet: (payload: SnippetWritePayload) => Promise<{ ok: boolean; message: string; id?: string }>
+  updateSnippet: (id: string, payload: SnippetWritePayload) => Promise<{ ok: boolean; message: string }>
+  deleteSnippet: (id: string) => Promise<{ ok: boolean; message: string }>
+  /** ECB rates via Frankfurter (main process; avoids renderer CORS). */
+  fetchFrankfurterLatest: (from: string) => Promise<FrankfurterLatestResponse>
+  listQuickNotes: () => Promise<QuickNoteEntry[]>
+  appendQuickNote: (text: string) => Promise<QuickNoteEntry | null>
+  updateQuickNote: (createdAt: number, text: string) => Promise<boolean>
+  deleteQuickNote: (createdAt: number) => Promise<boolean>
+  /** Fired when the user presses ⌘N / Ctrl+N (global) — save command-bar text to notes. */
+  onQuickNoteSaveShortcut: (listener: () => void) => () => void
+}

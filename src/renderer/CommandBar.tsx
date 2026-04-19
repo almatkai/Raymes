@@ -1,0 +1,1709 @@
+import { type DragEvent, type FormEvent, useEffect, useMemo, useRef, useState } from 'react'
+import type { Intent } from '../shared/intent'
+import type { LlmConfigRecord, ProviderId } from '../shared/llmConfig'
+import type { SearchResult } from '../shared/search'
+import { Hint, HintBar, Kbd, Message, SelectField, TextField, cx } from './ui/primitives'
+import { setCommandSurfaceEscapeConsumer } from './escapeGate'
+import { GlideList } from './ui/GlideList'
+import { useHoldToSpeak } from './hooks/useHoldToSpeak'
+import { evaluateExpression, type CalcResult } from './calculator'
+import { parseCurrencyQuery } from './currency/parseCurrencyQuery'
+import { getPreferredDefaultTarget } from './currency/currencyPreferences'
+import { useCurrencyConversion } from './hooks/useCurrencyConversion'
+
+const DEFAULT_MODEL: Record<ProviderId, string> = {
+  openai: 'gpt-4o-mini',
+  'openai-compatible': 'gpt-4o-mini',
+  gemini: 'gemini-2.0-flash',
+  anthropic: 'claude-3-5-haiku-20241022',
+  ollama: 'llama3.2',
+  copilot: 'gpt-4o',
+}
+
+/** Built-in palette entries only — extension views (e.g. open ports) use search, not this list. */
+const SYSTEM_SLASH_COMMANDS = ['/providers', '/settings', '/extensions', '/snippets', '/notes'] as const
+type SystemSlashCommand = (typeof SYSTEM_SLASH_COMMANDS)[number]
+
+function normalizeSystemSlashCommand(raw: string): SystemSlashCommand | null {
+  const first = raw.trim().split(/\s+/)[0]?.toLowerCase()
+  if (!first || !first.startsWith('/')) return null
+  if (first === '/setttings') return '/settings'
+  return (SYSTEM_SLASH_COMMANDS as readonly string[]).includes(first) ? (first as SystemSlashCommand) : null
+}
+
+const RECENT_SLASH_KEY = 'raymes:recent-slash-commands'
+const RECENT_SLASH_LIMIT = 8
+const RECENT_EXTENSION_COMMANDS_KEY = 'raymes:recent-extension-commands'
+const RECENT_EXTENSION_COMMANDS_LIMIT = 20
+const PINNED_COMMANDS_KEY = 'raymes:pinned-commands'
+const MAX_PINNED_COMMANDS = 9
+const PIN_ICON_CHOICES = [
+  '📌',
+  '⭐',
+  '🔥',
+  '⚡',
+  '🧠',
+  '🛠️',
+  '🚀',
+  '🎯',
+  '🧩',
+  '📎',
+  '🗂️',
+  '🔧',
+  '💡',
+  '🧭',
+  '🔒',
+  '🧪',
+  '🖥️',
+  '📦',
+  '📝',
+  '🔖',
+  '📁',
+  '🧰',
+  '🕹️',
+  '🔍',
+] as const
+
+type PinIcon = (typeof PIN_ICON_CHOICES)[number]
+
+type PinnedCommand = {
+  id: string
+  title: string
+  subtitle: string
+  category: SearchResult['category']
+  action: SearchResult['action']
+  icon: PinIcon
+  /** ⌥+digit hotkey; unique among pins, 1–9 */
+  slot: number
+}
+
+type PendingExtensionArgument = {
+  name: string
+  required?: boolean
+  type?: string
+  placeholder?: string
+  title?: string
+  data?: Array<{ title?: string; value?: string }>
+}
+
+function buildRecentExtensionCommandId(extensionId: string, commandName: string): string {
+  return `extcmd:${extensionId}:${commandName}`
+}
+
+function readRecentSlashCommands(): string[] {
+  try {
+    const raw = window.localStorage.getItem(RECENT_SLASH_KEY)
+    if (!raw) return []
+    const parsed = JSON.parse(raw)
+    if (!Array.isArray(parsed)) return []
+    const seen = new Set<string>()
+    const out: string[] = []
+    for (const v of parsed) {
+      if (typeof v !== 'string') continue
+      const n = normalizeSystemSlashCommand(v)
+      if (!n || seen.has(n)) continue
+      seen.add(n)
+      out.push(n)
+      if (out.length >= RECENT_SLASH_LIMIT) break
+    }
+    const naive = parsed
+      .filter((v): v is string => typeof v === 'string' && v.startsWith('/'))
+      .slice(0, RECENT_SLASH_LIMIT)
+    if (JSON.stringify(out) !== JSON.stringify(naive)) {
+      window.localStorage.setItem(RECENT_SLASH_KEY, JSON.stringify(out))
+    }
+    return out
+  } catch {
+    return []
+  }
+}
+
+function writeRecentSlashCommands(next: string[]): void {
+  window.localStorage.setItem(RECENT_SLASH_KEY, JSON.stringify(next.slice(0, RECENT_SLASH_LIMIT)))
+}
+
+function readRecentExtensionCommands(): string[] {
+  try {
+    const raw = window.localStorage.getItem(RECENT_EXTENSION_COMMANDS_KEY)
+    if (!raw) return []
+    const parsed = JSON.parse(raw)
+    if (!Array.isArray(parsed)) return []
+    return parsed
+      .map((value) => String(value || '').trim())
+      .filter((value) => value.startsWith('extcmd:'))
+      .slice(0, RECENT_EXTENSION_COMMANDS_LIMIT)
+  } catch {
+    return []
+  }
+}
+
+function writeRecentExtensionCommands(next: string[]): void {
+  window.localStorage.setItem(
+    RECENT_EXTENSION_COMMANDS_KEY,
+    JSON.stringify(next.slice(0, RECENT_EXTENSION_COMMANDS_LIMIT)),
+  )
+}
+
+function readPinnedCommands(): PinnedCommand[] {
+  try {
+    const raw = window.localStorage.getItem(PINNED_COMMANDS_KEY)
+    if (!raw) return []
+    const parsed = JSON.parse(raw)
+    if (!Array.isArray(parsed)) return []
+
+    const drafts = parsed
+      .map((item) => {
+        const id = String(item?.id ?? '').trim()
+        const title = String(item?.title ?? '').trim()
+        const subtitle = String(item?.subtitle ?? '').trim()
+        const category = item?.category
+        const action = item?.action
+        const icon = String(item?.icon ?? '') as PinIcon
+
+        const hasValidIcon = PIN_ICON_CHOICES.includes(icon)
+        const hasValidAction =
+          typeof action === 'object' && action !== null && typeof (action as { type?: unknown }).type === 'string'
+
+        if (!id || !title || typeof category !== 'string' || !hasValidAction || !hasValidIcon) {
+          return null
+        }
+
+        const rawSlot = item?.slot
+        const slotNum =
+          typeof rawSlot === 'number' && rawSlot >= 1 && rawSlot <= 9 ? Math.floor(rawSlot) : undefined
+
+        return {
+          id,
+          title,
+          subtitle,
+          category: category as SearchResult['category'],
+          action: action as SearchResult['action'],
+          icon,
+          ...(slotNum !== undefined ? { slot: slotNum } : {}),
+        } satisfies PinnedCommandDraft
+      })
+      .filter((item): item is PinnedCommandDraft => item !== null)
+      .slice(0, MAX_PINNED_COMMANDS)
+
+    return normalizePinnedSlots(drafts)
+  } catch {
+    return []
+  }
+}
+
+function writePinnedCommands(next: PinnedCommand[]): void {
+  window.localStorage.setItem(PINNED_COMMANDS_KEY, JSON.stringify(next.slice(0, MAX_PINNED_COMMANDS)))
+}
+
+function parseDigitIndex(key: string): number | null {
+  if (!/^[1-9]$/.test(key)) return null
+  return Number(key) - 1
+}
+
+const PIN_DRAG_MIME = 'application/x-raymes-pin-id'
+
+function parsePinnedSlotFromKeyEvent(event: KeyboardEvent): number | null {
+  const fromCode = /^Digit([1-9])$/.exec(event.code)?.[1]
+  if (fromCode) return Number(fromCode)
+  if (/^[1-9]$/.test(event.key)) return Number(event.key)
+  return null
+}
+
+type PinnedCommandDraft = Omit<PinnedCommand, 'slot'> & { slot?: number }
+
+/** Ensure every pin has a valid unique slot in 1…9 (stable order). */
+function normalizePinnedSlots(pins: PinnedCommandDraft[]): PinnedCommand[] {
+  if (pins.length === 0) return []
+  const claimed = new Set<number>()
+  const first = pins.map((pin) => {
+    const raw = pin.slot
+    const n = typeof raw === 'number' && raw >= 1 && raw <= 9 ? Math.floor(raw) : null
+    if (n !== null && !claimed.has(n)) {
+      claimed.add(n)
+      return { ...pin, slot: n } satisfies PinnedCommand
+    }
+    return { ...pin, slot: -1 }
+  })
+  for (const pin of first) {
+    if (pin.slot !== -1) continue
+    for (let d = 1; d <= 9; d++) {
+      if (!claimed.has(d)) {
+        pin.slot = d
+        claimed.add(d)
+        break
+      }
+    }
+  }
+  return first as PinnedCommand[]
+}
+
+function nextFreePinSlot(pins: PinnedCommand[]): number {
+  const used = new Set(pins.map((p) => p.slot))
+  for (let d = 1; d <= 9; d++) {
+    if (!used.has(d)) return d
+  }
+  return 1
+}
+
+function reorderPinnedByDrop(pins: PinnedCommand[], draggedId: string, targetId: string): PinnedCommand[] {
+  const from = pins.findIndex((p) => p.id === draggedId)
+  const to = pins.findIndex((p) => p.id === targetId)
+  if (from < 0 || to < 0 || from === to) return pins
+  const next = [...pins]
+  const [item] = next.splice(from, 1)
+  if (!item) return pins
+  const toAdj = from < to ? to - 1 : to
+  next.splice(toAdj, 0, item)
+  return next
+}
+
+/* Small search icon — refined, not emoji */
+function SearchIcon(): JSX.Element {
+  return (
+    <svg width="14" height="14" viewBox="0 0 14 14" fill="none" aria-hidden>
+      <circle cx="6" cy="6" r="4.1" stroke="currentColor" strokeWidth="1.3" />
+      <path d="m9.3 9.3 2.4 2.4" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" />
+    </svg>
+  )
+}
+
+export default function CommandBar({
+  onOpenProviders,
+  onOpenSettings,
+  onOpenExtensions,
+  onOpenPortsPage,
+  onOpenClipboardPage,
+  onOpenSnippetsPage,
+  onOpenNotesPage,
+}: {
+  onOpenProviders: () => void
+  onOpenSettings: () => void
+  onOpenExtensions: () => void
+  onOpenPortsPage: (opts?: { tab?: 'listen' | 'named' }) => void
+  onOpenClipboardPage: () => void
+  onOpenSnippetsPage: () => void
+  onOpenNotesPage: (opts?: { createdAt?: number }) => void
+}): JSX.Element {
+  const [value, setValue] = useState('')
+  const [lastIntent, setLastIntent] = useState<Intent | null>(null)
+  const [error, setError] = useState<string | null>(null)
+  const [streamText, setStreamText] = useState('')
+  const [streamError, setStreamError] = useState<string | null>(null)
+  const [isStreaming, setIsStreaming] = useState(false)
+  const [cfg, setCfg] = useState<LlmConfigRecord>({})
+  const [emptyAnswer, setEmptyAnswer] = useState(false)
+  const [recentSlash, setRecentSlash] = useState<string[]>([])
+  const [recentExtensionCommands, setRecentExtensionCommands] = useState<string[]>([])
+  const [pinnedCommands, setPinnedCommands] = useState<PinnedCommand[]>([])
+  const [draggingPinId, setDraggingPinId] = useState<string | null>(null)
+  const [pinPickerTarget, setPinPickerTarget] = useState<SearchResult | null>(null)
+  const [pinPickerIconIndex, setPinPickerIconIndex] = useState(0)
+  const [selectedSuggestion, setSelectedSuggestion] = useState(0)
+  const [followSuggestionSelection, setFollowSuggestionSelection] = useState(false)
+  const [searchResults, setSearchResults] = useState<SearchResult[]>([])
+  const [selectedSearch, setSelectedSearch] = useState(0)
+  const [followSearchSelection, setFollowSearchSelection] = useState(false)
+  const [actionMsg, setActionMsg] = useState<string | null>(null)
+  const actionMsgTimeoutRef = useRef<NodeJS.Timeout | null>(null)
+
+  const showActionMsg = (msg: string | null): void => {
+    if (actionMsgTimeoutRef.current) {
+      clearTimeout(actionMsgTimeoutRef.current)
+      actionMsgTimeoutRef.current = null
+    }
+    setActionMsg(msg)
+    if (msg) {
+      actionMsgTimeoutRef.current = setTimeout(() => {
+        setActionMsg(null)
+        actionMsgTimeoutRef.current = null
+      }, 4000)
+    }
+  }
+  const [pendingAction, setPendingAction] = useState<
+    | {
+        extensionId: string
+        commandName: string
+        title: string
+        commandArgumentDefinitions: PendingExtensionArgument[]
+      }
+    | null
+  >(null)
+  const [argumentValues, setArgumentValues] = useState<Record<string, string>>({})
+  const argInputRefs = useRef<Array<HTMLInputElement | HTMLSelectElement | null>>([])
+  const gotAnyTokenRef = useRef(false)
+  const pinPickerOpenRef = useRef(false)
+  const pendingOpenRef = useRef(false)
+  const valueRef = useRef(value)
+
+  useEffect(() => {
+    valueRef.current = value
+  }, [value])
+
+  useEffect(() => {
+    setRecentSlash(readRecentSlashCommands())
+    setRecentExtensionCommands(readRecentExtensionCommands())
+    setPinnedCommands(readPinnedCommands())
+  }, [])
+
+  useEffect(() => {
+    const offToken = window.raymes.onStreamToken((t) => {
+      gotAnyTokenRef.current = true
+      setStreamText((s) => s + t)
+    })
+    const offDone = window.raymes.onStreamDone(() => {
+      setIsStreaming(false)
+      setStreamError(null)
+      setEmptyAnswer(!gotAnyTokenRef.current)
+    })
+    const offErr = window.raymes.onStreamError((m) => {
+      setIsStreaming(false)
+      setEmptyAnswer(false)
+      setStreamError(m)
+    })
+    return () => {
+      offToken()
+      offDone()
+      offErr()
+    }
+  }, [])
+
+  useEffect(() => {
+    void window.raymes.getLlmConfig().then((c) => setCfg(c as LlmConfigRecord))
+  }, [])
+
+  useEffect(() => {
+    return window.raymes.onQuickNoteSaveShortcut(() => {
+      const text = valueRef.current.trim()
+      if (!text) {
+        showActionMsg('Type text in the command bar, then press Cmd+N to save a note')
+        return
+      }
+      void window.raymes
+        .appendQuickNote(text)
+        .then((entry) => {
+          if (!entry) {
+            showActionMsg('Nothing to save')
+            return
+          }
+          void window.raymes.searchAll(valueRef.current).then((items) => {
+            setSearchResults(items)
+            setSelectedSearch(0)
+            setFollowSearchSelection(true)
+          })
+          showActionMsg('Saved to Quick Notes')
+        })
+        .catch(() => {
+          showActionMsg('Could not save quick note')
+        })
+    })
+  }, [])
+
+  // Hold-to-Speak pipeline: captures mic audio via MediaRecorder, resamples
+  // to 16 kHz mono WAV in the renderer, and hands the bytes to the main
+  // process for local transcription (whisper-cli / moonshine). See
+  // `useHoldToSpeak` for the full rationale and the reason we no longer
+  // use `webkitSpeechRecognition`.
+  const holdToSpeak = useHoldToSpeak({
+    onMessage: (message) => showActionMsg(message),
+    onTranscript: (text) => {
+      const cleaned = text.trim()
+      if (!cleaned) {
+        showActionMsg('Nothing was transcribed. Try speaking louder or for longer.')
+        return
+      }
+      setValue((prev) => {
+        if (!prev.trim()) return cleaned
+        if (prev.endsWith(' ')) return `${prev}${cleaned}`
+        return `${prev} ${cleaned}`
+      })
+    },
+  })
+
+  const provider = (cfg.provider ?? 'ollama') as ProviderId
+  const model = useMemo(() => cfg.model ?? DEFAULT_MODEL[provider], [cfg.model, provider])
+
+  const slashQuery = value.trimStart()
+  const slashTerm = slashQuery.startsWith('/') ? slashQuery.slice(1).toLowerCase() : ''
+  const isSlashInput = slashQuery.startsWith('/')
+
+  // Live calculator: we evaluate on every keystroke in the renderer so
+  // there's no IPC latency. Only when the buffer is not a slash command —
+  // `/providers` shouldn't trigger math.js.
+  const mathCalc: CalcResult | null = useMemo(() => {
+    if (isSlashInput) return null
+    const t = value.trim()
+    if (t && parseCurrencyQuery(t, getPreferredDefaultTarget())) {
+      return null
+    }
+    return evaluateExpression(value)
+  }, [isSlashInput, value])
+  const currencyCalc = useCurrencyConversion(value, isSlashInput)
+  const calc = currencyCalc ?? mathCalc
+
+  const calcResultRow: SearchResult | null = useMemo(() => {
+    if (!calc) return null
+    if (currencyCalc) {
+      const subtitle = `${currencyCalc.amountFormatted} → ${currencyCalc.to}`
+      return {
+        id: `currency:${currencyCalc.from}-${currencyCalc.to}-${currencyCalc.amount}`,
+        title: currencyCalc.formatted,
+        subtitle,
+        category: 'calculator',
+        score: 10_000,
+        action: { type: 'copy-text', text: currencyCalc.clipboard },
+      }
+    }
+    return {
+      id: `calc:${calc.expression}`,
+      title: calc.formatted,
+      subtitle: calc.expression,
+      category: 'calculator',
+      score: 10_000,
+      action: { type: 'copy-text', text: calc.clipboard },
+    }
+  }, [calc, currencyCalc])
+
+  const visibleSearchResults = useMemo(
+    () => (calcResultRow ? [calcResultRow, ...searchResults] : searchResults),
+    [calcResultRow, searchResults],
+  )
+  const visibleSearchCount = visibleSearchResults.length
+  const pinnedMetaById = useMemo(() => {
+    const out = new Map<string, { slot: number; icon: PinIcon }>()
+    pinnedCommands.forEach((pin) => {
+      out.set(pin.id, { slot: pin.slot, icon: pin.icon })
+    })
+    return out
+  }, [pinnedCommands])
+
+  const suggestions = useMemo(() => {
+    if (!isSlashInput) return []
+    const recentsFiltered = recentSlash.filter((cmd) => cmd.slice(1).toLowerCase().includes(slashTerm))
+    const knownFiltered = SYSTEM_SLASH_COMMANDS.filter((cmd) =>
+      cmd.slice(1).toLowerCase().includes(slashTerm),
+    )
+    const ordered =
+      slashTerm.length === 0
+        ? [...recentsFiltered, ...knownFiltered]
+        : [...knownFiltered, ...recentsFiltered]
+    return Array.from(new Set(ordered))
+  }, [isSlashInput, recentSlash, slashTerm])
+
+  useEffect(() => {
+    let cancelled = false
+    const t = setTimeout(() => {
+      void window.raymes.searchAll(value).then((items) => {
+        if (!cancelled) setSearchResults(items)
+      })
+    }, 70)
+    return () => {
+      cancelled = true
+      clearTimeout(t)
+    }
+  }, [value])
+
+  useEffect(() => {
+    if (isSlashInput || searchResults.length === 0 || recentExtensionCommands.length === 0) return
+    // When the calc row is present it owns index 0 and should stay
+    // selected — typing `2+2` should not jump to a recent app.
+    if (calcResultRow) return
+    const mostRecent = recentExtensionCommands[0]
+    const idx = visibleSearchResults.findIndex((item) => item.id === mostRecent)
+    if (idx >= 0 && idx < visibleSearchCount) {
+      setSelectedSearch(idx)
+    }
+  }, [isSlashInput, recentExtensionCommands, searchResults, visibleSearchResults, visibleSearchCount, calcResultRow])
+
+  // Keep the selection inside the rendered range whenever the result set
+  // changes (e.g. user starts typing a narrower query).
+  useEffect(() => {
+    if (visibleSearchCount === 0) return
+    setSelectedSearch((i) => (i >= visibleSearchCount ? visibleSearchCount - 1 : i))
+  }, [visibleSearchCount])
+
+  // Slash suggestion list can shrink while the highlight index stays high;
+  // keep it in range so Enter always targets a real row.
+  useEffect(() => {
+    if (suggestions.length === 0) return
+    setSelectedSuggestion((i) => Math.min(Math.max(-1, i), suggestions.length - 1))
+  }, [suggestions])
+
+  const trackSlashCommand = (raw: string): void => {
+    const cmd = normalizeSystemSlashCommand(raw)
+    if (!cmd) return
+    const next = [cmd, ...recentSlash.filter((v) => v !== cmd)].slice(0, RECENT_SLASH_LIMIT)
+    setRecentSlash(next)
+    writeRecentSlashCommands(next)
+  }
+
+  /** Navigate for a known slash command. Returns true if handled. */
+  const dispatchKnownSlashCommand = (cmd: string): boolean => {
+    const c = cmd.trim()
+    if (!c.startsWith('/')) return false
+
+    if (c === '/providers') {
+      trackSlashCommand(c)
+      setValue('')
+      onOpenProviders()
+      return true
+    }
+    if (c === '/settings') {
+      trackSlashCommand(c)
+      setValue('')
+      onOpenSettings()
+      return true
+    }
+    if (c === '/extensions') {
+      trackSlashCommand(c)
+      setValue('')
+      onOpenExtensions()
+      return true
+    }
+    if (c === '/snippets') {
+      trackSlashCommand(c)
+      setValue('')
+      onOpenSnippetsPage()
+      return true
+    }
+    if (c === '/notes') {
+      trackSlashCommand(c)
+      setValue('')
+      onOpenNotesPage()
+      return true
+    }
+    return false
+  }
+
+  const trackExtensionCommand = (extensionId: string, commandName: string): void => {
+    const id = buildRecentExtensionCommandId(extensionId, commandName)
+    const next = [id, ...recentExtensionCommands.filter((v) => v !== id)].slice(0, RECENT_EXTENSION_COMMANDS_LIMIT)
+    setRecentExtensionCommands(next)
+    writeRecentExtensionCommands(next)
+  }
+
+  const persistPinnedCommands = (next: PinnedCommand[]): void => {
+    const normalized = normalizePinnedSlots(next.map((p) => ({ ...p })))
+    setPinnedCommands(normalized)
+    writePinnedCommands(normalized)
+  }
+
+  const unpinCommandById = (id: string): void => {
+    const target = pinnedCommands.find((pin) => pin.id === id)
+    if (!target) {
+      showActionMsg('That command is not pinned')
+      return
+    }
+    const next = pinnedCommands.filter((pin) => pin.id !== id)
+    persistPinnedCommands(next)
+    showActionMsg(`Unpinned: ${target.title}`)
+  }
+
+  const openPinPicker = (result: SearchResult): void => {
+    const alreadyPinned = pinnedCommands.some((pin) => pin.id === result.id)
+    if (alreadyPinned) {
+      showActionMsg('Already pinned. Press ⌘P to unpin.')
+      return
+    }
+
+    setPinPickerTarget(result)
+    setPinPickerIconIndex(0)
+    showActionMsg('Choose an emoji, then press Enter to pin')
+  }
+
+  const confirmPin = (iconOverride?: PinIcon): void => {
+    if (!pinPickerTarget) return
+
+    if (pinnedCommands.some((pin) => pin.id === pinPickerTarget.id)) {
+      setPinPickerTarget(null)
+      showActionMsg('Already pinned. Press ⌘P to unpin.')
+      focusCommandInput()
+      return
+    }
+
+    const icon = iconOverride ?? PIN_ICON_CHOICES[pinPickerIconIndex]
+    if (!icon) return
+
+    const slot = nextFreePinSlot(pinnedCommands)
+    const next: PinnedCommand[] = [
+      {
+        id: pinPickerTarget.id,
+        title: pinPickerTarget.title,
+        subtitle: pinPickerTarget.subtitle,
+        category: pinPickerTarget.category,
+        action: pinPickerTarget.action,
+        icon,
+        slot,
+      },
+      ...pinnedCommands.filter((pin) => pin.id !== pinPickerTarget.id),
+    ].slice(0, MAX_PINNED_COMMANDS)
+
+    persistPinnedCommands(next)
+    setPinPickerTarget(null)
+    showActionMsg(`Pinned: ${pinPickerTarget.title}`)
+    focusCommandInput()
+  }
+
+  const runPinnedCommand = async (pin: PinnedCommand, listIndex: number): Promise<void> => {
+    const pinnedResult: SearchResult = {
+      id: pin.id,
+      title: pin.title,
+      subtitle: pin.subtitle,
+      category: pin.category,
+      score: 1000 - listIndex,
+      action: pin.action,
+    }
+    await runSelectedSearchResult(pinnedResult, listIndex + 1)
+  }
+
+  const cyclePinShortcutSlot = (pinId: string): void => {
+    const pin = pinnedCommands.find((p) => p.id === pinId)
+    if (!pin) return
+    const taken = new Set(pinnedCommands.filter((p) => p.id !== pinId).map((p) => p.slot))
+    let d = pin.slot
+    for (let step = 0; step < 9; step++) {
+      d = d >= 9 ? 1 : d + 1
+      if (!taken.has(d)) {
+        persistPinnedCommands(pinnedCommands.map((p) => (p.id === pinId ? { ...p, slot: d } : p)))
+        showActionMsg(`Pinned shortcut: ⌥${d}`)
+        return
+      }
+    }
+  }
+
+  const isDictating = holdToSpeak.state.kind === 'recording'
+  const isTranscribing = holdToSpeak.state.kind === 'transcribing'
+  const dictationSupported = holdToSpeak.supported
+  const startDictation = holdToSpeak.press
+  const stopDictation = holdToSpeak.release
+
+  useEffect(() => {
+    if (!dictationSupported) return undefined
+    return window.raymes.onVoiceHotkeyHold(({ phase }) => {
+      if (phase === 'press') startDictation()
+      else stopDictation()
+    })
+  }, [dictationSupported, startDictation, stopDictation])
+
+  const speakAnswerText = async (): Promise<void> => {
+    if (!streamText.trim()) return
+    try {
+      const result = await window.raymes.voiceSpeak(streamText)
+      if (!result.ok) {
+        showActionMsg('Could not start read-aloud')
+      }
+    } catch {
+      showActionMsg('Could not start read-aloud')
+    }
+  }
+
+  const clearPendingAction = (): void => {
+    setPendingAction(null)
+    setArgumentValues({})
+  }
+
+  const cancelPendingAction = (): void => {
+    clearPendingAction()
+    focusCommandInput()
+  }
+
+  async function submitPendingAction(): Promise<void> {
+    if (!pendingAction) return
+
+    const missingRequired = pendingAction.commandArgumentDefinitions.find((def) => {
+      if (!def.required) return false
+      const current = argumentValues[def.name]
+      return !current || current.trim().length === 0
+    })
+
+    if (missingRequired) {
+      showActionMsg(`Missing required argument: ${missingRequired.title || missingRequired.name}`)
+      return
+    }
+
+    try {
+      const r = await window.raymes.executeSearchAction({
+        type: 'run-extension-command',
+        extensionId: pendingAction.extensionId,
+        commandName: pendingAction.commandName,
+        title: pendingAction.title,
+        commandArgumentDefinitions: pendingAction.commandArgumentDefinitions,
+        argumentValues,
+      }, {
+        query: value.trim(),
+        rank: selectedSearch + 1,
+        resultId: buildRecentExtensionCommandId(pendingAction.extensionId, pendingAction.commandName),
+      })
+      showActionMsg(r.message)
+      if (r.ok) {
+        clearPendingAction()
+        setValue('')
+        trackExtensionCommand(pendingAction.extensionId, pendingAction.commandName)
+        focusCommandInput()
+      }
+    } catch (err) {
+      showActionMsg(err instanceof Error ? err.message : 'Action failed')
+    }
+  }
+
+  async function runSelectedSearchResult(result: SearchResult, rank = selectedSearch + 1): Promise<void> {
+    const quickNoteIdMatch = /^note:(\d+)$/.exec(result.id)
+    if (result.category === 'quick-notes' && quickNoteIdMatch?.[1]) {
+      const createdAt = Number(quickNoteIdMatch[1])
+      if (Number.isFinite(createdAt)) {
+        clearPendingAction()
+        showActionMsg(null)
+        setValue('')
+        onOpenNotesPage({ createdAt })
+        return
+      }
+    }
+
+    if (
+      result.action.type === 'run-extension-command' &&
+      result.action.extensionId === 'raycast.port-manager' &&
+      (result.action.commandName === 'open-ports' || result.action.commandName === 'open-ports-menu-bar')
+    ) {
+      clearPendingAction()
+      showActionMsg(null)
+      setValue('')
+      onOpenPortsPage()
+      return
+    }
+
+    if (
+      result.action.type === 'run-extension-command' &&
+      result.action.extensionId === 'raycast.port-manager' &&
+      result.action.commandName === 'named-ports'
+    ) {
+      clearPendingAction()
+      showActionMsg(null)
+      setValue('')
+      onOpenPortsPage({ tab: 'named' })
+      return
+    }
+
+    if (
+      result.action.type === 'run-native-command' &&
+      result.action.commandId === 'list-listening-ports'
+    ) {
+      clearPendingAction()
+      showActionMsg(null)
+      setValue('')
+      onOpenPortsPage()
+      return
+    }
+
+    // The clipboard-history command is a pure UI navigation — we hijack
+    // it before it round-trips to main so the launcher flips to the
+    // dedicated surface instead of trying to execute a native command.
+    if (
+      result.action.type === 'run-native-command' &&
+      result.action.commandId === 'open-clipboard-history'
+    ) {
+      clearPendingAction()
+      showActionMsg(null)
+      setValue('')
+      onOpenClipboardPage()
+      return
+    }
+
+    if (
+      result.action.type === 'run-native-command' &&
+      result.action.commandId === 'open-snippets'
+    ) {
+      clearPendingAction()
+      showActionMsg(null)
+      setValue('')
+      onOpenSnippetsPage()
+      return
+    }
+
+    if (
+      result.action.type === 'run-native-command' &&
+      result.action.commandId === 'open-quick-notes'
+    ) {
+      clearPendingAction()
+      showActionMsg(null)
+      setValue('')
+      onOpenNotesPage()
+      return
+    }
+
+    if (result.action.type === 'run-extension-command') {
+      const defs =
+        Array.isArray(result.action.commandArgumentDefinitions) && result.action.commandArgumentDefinitions.length > 0
+          ? result.action.commandArgumentDefinitions
+          : result.action.argumentName
+            ? [
+                {
+                  name: 'argument',
+                  title: result.action.argumentName,
+                  placeholder: result.action.argumentName,
+                  required: true,
+                  type: 'text',
+                } satisfies PendingExtensionArgument,
+              ]
+            : []
+
+      if (defs.length > 0) {
+        const initialValues = defs.reduce(
+          (acc, def) => {
+            acc[def.name] = ''
+            return acc
+          },
+          {} as Record<string, string>,
+        )
+
+        setPendingAction({
+          extensionId: result.action.extensionId,
+          commandName: result.action.commandName,
+          title: result.action.title,
+          commandArgumentDefinitions: defs,
+        })
+        setArgumentValues(initialValues)
+        showActionMsg('Fill arguments · Enter to run · Esc to cancel')
+        return
+      }
+    }
+
+    try {
+      const r = await window.raymes.executeSearchAction(result.action, {
+        query: value.trim(),
+        rank,
+        resultId: result.id,
+      })
+      showActionMsg(r.message)
+      if (r.ok) setValue('')
+      if (r.ok) clearPendingAction()
+      if (r.ok && result.action.type === 'run-extension-command') {
+        trackExtensionCommand(result.action.extensionId, result.action.commandName)
+      }
+      if (r.ok && result.category === 'snippets' && result.action.type === 'copy-text') {
+        void window.raymes.hide()
+      }
+    } catch (err) {
+      showActionMsg(err instanceof Error ? err.message : 'Action failed')
+    }
+  }
+
+  const focusCommandInput = (): void => {
+    document.getElementById('command-input')?.focus()
+  }
+
+  pinPickerOpenRef.current = pinPickerTarget !== null
+  pendingOpenRef.current = pendingAction !== null
+
+  useEffect(() => {
+    setCommandSurfaceEscapeConsumer(() => {
+      if (pinPickerOpenRef.current) {
+        setPinPickerTarget(null)
+        showActionMsg(null)
+        focusCommandInput()
+        return true
+      }
+      if (pendingOpenRef.current) {
+        setPendingAction(null)
+        setArgumentValues({})
+        showActionMsg(null)
+        focusCommandInput()
+        return true
+      }
+      return false
+    })
+    return () => {
+      setCommandSurfaceEscapeConsumer(null)
+    }
+  }, [])
+
+  useEffect(() => {
+    if (!pendingAction) return
+    requestAnimationFrame(() => argInputRefs.current[0]?.focus())
+  }, [pendingAction])
+
+  useEffect(() => {
+    const onGlobalKeyDown = (event: KeyboardEvent): void => {
+      if (pinPickerTarget) {
+        if (event.key === 'Escape') {
+          event.preventDefault()
+          setPinPickerTarget(null)
+          showActionMsg(null)
+          focusCommandInput()
+          return
+        }
+
+        if (event.key === 'Tab') {
+          event.preventDefault()
+          // Tab and Shift+Tab both cancel — same as Esc, and matches the hint copy.
+          setPinPickerTarget(null)
+          showActionMsg(null)
+          focusCommandInput()
+          return
+        }
+
+        const cols = 8
+        if (event.key === 'ArrowRight') {
+          event.preventDefault()
+          setPinPickerIconIndex((i) => Math.min(i + 1, PIN_ICON_CHOICES.length - 1))
+        } else if (event.key === 'ArrowLeft') {
+          event.preventDefault()
+          setPinPickerIconIndex((i) => Math.max(i - 1, 0))
+        } else if (event.key === 'ArrowDown') {
+          event.preventDefault()
+          setPinPickerIconIndex((i) => Math.min(i + cols, PIN_ICON_CHOICES.length - 1))
+        } else if (event.key === 'ArrowUp') {
+          event.preventDefault()
+          setPinPickerIconIndex((i) => Math.max(i - cols, 0))
+        }
+
+        const iconDigit = parseDigitIndex(event.key)
+        if (iconDigit !== null && iconDigit < PIN_ICON_CHOICES.length) {
+          event.preventDefault()
+          const icon = PIN_ICON_CHOICES[iconDigit]
+          if (!icon) return
+          confirmPin(icon)
+          return
+        }
+
+        if (event.key === 'Enter') {
+          event.preventDefault()
+          confirmPin()
+          return
+        }
+
+        return
+      }
+
+      const hasCommandMod = event.metaKey || event.ctrlKey
+      if (hasCommandMod) {
+        if (event.key.toLowerCase() === 'p' && !event.shiftKey) {
+          event.preventDefault()
+          const selected = visibleSearchResults[selectedSearch] ?? visibleSearchResults[0] ?? null
+          if (!selected) {
+            showActionMsg('No command selected to pin or unpin')
+            return
+          }
+          if (selected.category === 'calculator') {
+            showActionMsg('Calculator results can’t be pinned')
+            return
+          }
+          const isPinned = pinnedCommands.some((pin) => pin.id === selected.id)
+          if (isPinned) {
+            unpinCommandById(selected.id)
+          } else {
+            openPinPicker(selected)
+          }
+          return
+        }
+      }
+
+      if (event.altKey) {
+        const slot = parsePinnedSlotFromKeyEvent(event)
+        if (slot !== null) {
+          const pinIndex = pinnedCommands.findIndex((p) => p.slot === slot)
+          if (pinIndex >= 0) {
+            event.preventDefault()
+            const pin = pinnedCommands[pinIndex]
+            if (pin) void runPinnedCommand(pin, pinIndex)
+          }
+        }
+      }
+    }
+
+    window.addEventListener('keydown', onGlobalKeyDown)
+    return () => window.removeEventListener('keydown', onGlobalKeyDown)
+  }, [confirmPin, pinPickerIconIndex, pinPickerTarget, pinnedCommands, visibleSearchResults, selectedSearch])
+
+  async function onSubmit(e: FormEvent): Promise<void> {
+    e.preventDefault()
+    setError(null)
+    setStreamText('')
+    setStreamError(null)
+    setIsStreaming(false)
+    setEmptyAnswer(false)
+    gotAnyTokenRef.current = false
+    const q = value.trim()
+    if (pendingAction) {
+      await submitPendingAction()
+      return
+    }
+
+    if (!isSlashInput && visibleSearchResults.length > 0) {
+      const selected = visibleSearchResults[selectedSearch]
+      if (selected) {
+        await runSelectedSearchResult(selected, selectedSearch + 1)
+        return
+      }
+    }
+
+    // Slash palette: Enter should run the *highlighted* suggestion, not
+    // require a second Enter after the input text exactly matches. When
+    // the buffer is e.g. `/set` and the first row is `/settings`, we
+    // dispatch `/settings` immediately (same as Raycast-style pickers).
+    if (isSlashInput && suggestions.length > 0) {
+      const idx = Math.min(Math.max(0, selectedSuggestion), suggestions.length - 1)
+      const cmd = suggestions[idx]
+      if (cmd && dispatchKnownSlashCommand(cmd)) {
+        return
+      }
+    }
+
+    if (q.startsWith('/')) {
+      trackSlashCommand(q)
+    }
+    if (q === '/providers') {
+      setValue('')
+      onOpenProviders()
+      return
+    }
+    if (q === '/settings') {
+      setValue('')
+      onOpenSettings()
+      return
+    }
+    if (q === '/extensions') {
+      setValue('')
+      onOpenExtensions()
+      return
+    }
+    if (q === '/snippets') {
+      setValue('')
+      onOpenSnippetsPage()
+      return
+    }
+    if (q === '/notes') {
+      setValue('')
+      onOpenNotesPage()
+      return
+    }
+    if (q === '/open-ports') {
+      setValue('')
+      onOpenPortsPage()
+      return
+    }
+    try {
+      const intent = await window.raymes.query(value)
+      if (intent.type === 'answer' || intent.type === 'ai') {
+        setIsStreaming(true)
+      }
+      if (intent.type === 'extension' && intent.name === 'providers') {
+        setValue('')
+        onOpenProviders()
+        return
+      }
+      if (intent.type === 'extension' && intent.name === 'extensions') {
+        setValue('')
+        onOpenExtensions()
+        return
+      }
+      if (intent.type === 'extension' && intent.name === 'open-ports') {
+        setValue('')
+        onOpenPortsPage()
+        return
+      }
+      setLastIntent(intent)
+    } catch (err) {
+      setIsStreaming(false)
+      setLastIntent(null)
+      setError(err instanceof Error ? err.message : 'Query failed')
+    }
+  }
+
+  const showAnswer = isStreaming || Boolean(streamText) || Boolean(streamError) || emptyAnswer
+  const showSuggestions = isSlashInput && suggestions.length > 0
+  const showSearchResults = !isSlashInput && visibleSearchCount > 0
+
+  const handleInputKeyDown = (e: React.KeyboardEvent<HTMLInputElement>): void => {
+    if (pinPickerTarget) {
+      // While pin picker is open, global key handling owns navigation.
+      return
+    }
+
+    if (isSlashInput && suggestions.length) {
+      if (e.key === 'ArrowDown') {
+        e.preventDefault()
+        setFollowSuggestionSelection(true)
+        setSelectedSuggestion((i) => Math.min(i + 1, suggestions.length - 1))
+      }
+      if (e.key === 'ArrowUp') {
+        e.preventDefault()
+        setFollowSuggestionSelection(true)
+        setSelectedSuggestion((i) => Math.max(i - 1, 0))
+      }
+    } else if (visibleSearchCount) {
+      if (e.key === 'ArrowDown') {
+        e.preventDefault()
+        setFollowSearchSelection(true)
+        setSelectedSearch((i) => Math.min(i + 1, visibleSearchCount - 1))
+      }
+      if (e.key === 'ArrowUp') {
+        e.preventDefault()
+        setFollowSearchSelection(true)
+        setSelectedSearch((i) => Math.max(i - 1, 0))
+      }
+    }
+    if (e.key === 'Tab') {
+      e.preventDefault()
+      if (pendingAction) {
+        argInputRefs.current[0]?.focus()
+        return
+      }
+      if (pinPickerTarget) {
+        // Just let it stay there or switch logic. But globally we handle it.
+        return
+      }
+      if (isSlashInput) {
+        setValue(suggestions[selectedSuggestion] ?? value)
+        return
+      }
+      // If we are in results, and hit tab, we go to emoji
+      if (showSearchResults) {
+        const selected = visibleSearchResults[selectedSearch] ?? visibleSearchResults[0]
+        if (selected && selected.category !== 'calculator') {
+          openPinPicker(selected)
+        }
+      }
+    }
+    // Enter with slash suggestions: let the form `onSubmit` run so one
+    // keypress executes the highlighted command (including partial input).
+  }
+
+  return (
+    <div className="flex h-full min-h-0 w-full flex-col gap-2">
+      {/* Primary glass card: icon + input */}
+      <div className="glass-card shrink-0 px-4 py-3 animate-raymes-scale-in">
+        <form className="relative w-full" onSubmit={(ev) => void onSubmit(ev)}>
+          <div className="flex items-center gap-3">
+            <span className="text-ink-3">
+              <SearchIcon />
+            </span>
+            <input
+              id="command-input"
+              type="text"
+              value={value}
+              onChange={(e) => {
+                setValue(e.target.value)
+                setSelectedSuggestion(0)
+                setSelectedSearch(0)
+              }}
+              onKeyDown={handleInputKeyDown}
+              placeholder="Ask anything or type / for commands"
+              autoComplete="off"
+              spellCheck={false}
+              className="w-full border-0 bg-transparent p-0 font-display text-[15px] font-normal text-ink-1 outline-none ring-0 placeholder:text-ink-4 focus:ring-0"
+            />
+            {dictationSupported ? (
+              <button
+                type="button"
+                className={cx(
+                  'shrink-0 rounded-raymes-chip border px-2 py-0.5 text-[10px] font-medium uppercase tracking-[0.12em] transition',
+                  isDictating
+                    ? 'border-rose-400/40 bg-rose-500/20 text-rose-200'
+                    : isTranscribing
+                      ? 'border-amber-400/40 bg-amber-500/15 text-amber-200'
+                      : 'border-white/10 bg-white/[0.03] text-ink-3 hover:text-ink-2',
+                )}
+                disabled={isTranscribing}
+                onMouseDown={(event) => {
+                  event.preventDefault()
+                  startDictation()
+                }}
+                onMouseUp={stopDictation}
+                onMouseLeave={stopDictation}
+                onTouchStart={(event) => {
+                  event.preventDefault()
+                  startDictation()
+                }}
+                onTouchEnd={stopDictation}
+                title="Hold to speak — or keep Option+Space held after opening Raymes (macOS)"
+              >
+                {isDictating ? 'Listening' : isTranscribing ? 'Transcribing…' : 'Hold to speak'}
+              </button>
+            ) : null}
+            <span className="shrink-0 font-mono text-[10px] tabular-nums text-ink-4">
+              {provider} · {model}
+            </span>
+          </div>
+        </form>
+      </div>
+
+      {/* Middle column: flex-1 so the search list can grow to the footer; inner
+          panels scroll (GlideList, answer, …) instead of this outer region. */}
+      <div className="flex min-h-0 flex-1 flex-col gap-[var(--s-2)] overflow-hidden pr-0.5">
+      {/* Pinned commands */}
+      {pinnedCommands.length > 0 ? (
+        <div className="glass-card animate-raymes-scale-in px-2 py-2">
+          <div className="flex items-center gap-1.5 overflow-x-auto">
+            {pinnedCommands.map((pin, index) => (
+              <div
+                key={`pin:${pin.id}`}
+                draggable
+                title="Drag to reorder · Click icon to run · Click number to change shortcut · Right-click to unpin"
+                onDragStart={(e: DragEvent) => {
+                  e.dataTransfer.setData(PIN_DRAG_MIME, pin.id)
+                  e.dataTransfer.effectAllowed = 'move'
+                  setDraggingPinId(pin.id)
+                }}
+                onDragEnd={() => {
+                  setDraggingPinId(null)
+                }}
+                onDragOver={(e: DragEvent) => {
+                  e.preventDefault()
+                  e.dataTransfer.dropEffect = 'move'
+                }}
+                onDrop={(e: DragEvent) => {
+                  e.preventDefault()
+                  const fromId = e.dataTransfer.getData(PIN_DRAG_MIME)
+                  if (!fromId || fromId === pin.id) return
+                  persistPinnedCommands(reorderPinnedByDrop(pinnedCommands, fromId, pin.id))
+                }}
+                onContextMenu={(event) => {
+                  event.preventDefault()
+                  unpinCommandById(pin.id)
+                }}
+                className={cx(
+                  'relative flex shrink-0 cursor-grab flex-col items-center gap-1 rounded-raymes-row border border-white/10 bg-white/[0.03] px-1.5 py-1.5 transition active:cursor-grabbing',
+                  draggingPinId === pin.id ? 'opacity-45' : 'hover:border-white/20 hover:bg-white/[0.07]',
+                )}
+              >
+                <button
+                  type="button"
+                  draggable={false}
+                  title={pin.title}
+                  className="group grid h-7 w-7 shrink-0 place-items-center rounded-raymes-chip border border-white/12 bg-white/[0.05] text-[14px] text-ink-1 transition hover:border-white/20 hover:bg-white/[0.08]"
+                  onClick={() => {
+                    void runPinnedCommand(pin, index)
+                  }}
+                >
+                  {pin.icon}
+                </button>
+                <button
+                  type="button"
+                  draggable={false}
+                  title="Change ⌥ shortcut"
+                  className="font-mono text-[9px] text-ink-4 transition hover:text-ink-2"
+                  onClick={(event) => {
+                    event.stopPropagation()
+                    cyclePinShortcutSlot(pin.id)
+                  }}
+                >
+                  <Kbd>⌥</Kbd>
+                  <Kbd>{pin.slot}</Kbd>
+                </button>
+              </div>
+            ))}
+          </div>
+        </div>
+      ) : null}
+
+      {/* Pin icon picker */}
+      {pinPickerTarget ? (
+        <div className="glass-card animate-raymes-scale-in px-3 py-2.5">
+          <p className="text-[11px] font-semibold tracking-tight text-ink-2">
+            Pin icon for <span className="text-ink-1">{pinPickerTarget.title}</span>
+          </p>
+            <div className="mt-2 grid grid-cols-8 gap-1">
+            {PIN_ICON_CHOICES.map((icon, index) => (
+              <button
+                key={`pin-icon:${icon}`}
+                type="button"
+                className={cx(
+                  'grid h-8 w-full place-items-center rounded-raymes-chip border text-[14px] transition',
+                  PIN_ICON_CHOICES[pinPickerIconIndex] === icon
+                    ? 'border-accent/60 bg-accent/15 text-ink-1'
+                    : 'border-white/10 bg-white/[0.03] text-ink-2 hover:border-white/20 hover:text-ink-1',
+                )}
+                title={`Icon ${index + 1}`}
+                onClick={() => {
+                  setPinPickerIconIndex(index)
+                  confirmPin(icon)
+                }}
+              >
+                {icon}
+              </button>
+            ))}
+          </div>
+          <p className="mt-2 text-[10.5px] text-ink-4">
+            Pick an emoji, then press Enter to confirm. Esc or Tab to cancel.
+          </p>
+        </div>
+      ) : null}
+
+      {/* Slash suggestions */}
+      {showSuggestions ? (
+        <div
+          className="glass-card animate-raymes-scale-in overflow-hidden px-2 py-2"
+          onWheelCapture={() => setFollowSuggestionSelection(false)}
+          onMouseLeave={() => {
+            setFollowSuggestionSelection(false)
+            setSelectedSuggestion(-1)
+          }}
+        >
+          <GlideList
+            selectedIndex={selectedSuggestion}
+            itemCount={suggestions.length}
+            followSelected={followSuggestionSelection}
+            className="max-h-44 overflow-y-auto"
+          >
+            {suggestions.map((cmd, i) => (
+              <li key={cmd} className="relative z-[1]">
+                <button
+                  type="button"
+                  className="relative flex w-full items-center justify-between rounded-raymes-row px-3 py-2 text-left text-[13px] text-ink-2 transition hover:text-ink-1"
+                  onMouseEnter={() => {
+                    setFollowSuggestionSelection(false)
+                    setSelectedSuggestion(i)
+                  }}
+                  onMouseDown={(ev) => ev.preventDefault()}
+                  onClick={() => setValue(cmd)}
+                >
+                  <span className="font-mono text-[12.5px] tracking-tight text-ink-1">{cmd}</span>
+                  {recentSlash.includes(cmd) ? (
+                    <span className="text-[9.5px] font-medium uppercase tracking-[0.14em] text-ink-4">
+                      Recent
+                    </span>
+                  ) : null}
+                </button>
+              </li>
+            ))}
+          </GlideList>
+        </div>
+      ) : null}
+
+      {/* Pending extension action form */}
+      {pendingAction ? (
+        <form
+          onSubmit={(ev) => {
+            ev.preventDefault()
+            void submitPendingAction()
+          }}
+          className="glass-card animate-raymes-scale-in px-3 py-2.5"
+          style={{
+            boxShadow:
+              'inset 0 1px 0 rgba(52, 211, 153, 0.12), inset 0 0 0 1px rgba(52, 211, 153, 0.25)',
+          }}
+        >
+          <p className="mb-2 flex items-center gap-2 text-[11px] font-semibold tracking-tight text-emerald-300">
+            <span className="h-1.5 w-1.5 rounded-full bg-emerald-400" />
+            {pendingAction.title}
+            <span className="text-ink-4">·</span>
+            <span className="font-normal text-ink-3">
+              {pendingAction.commandArgumentDefinitions.length} field
+              {pendingAction.commandArgumentDefinitions.length === 1 ? '' : 's'}
+            </span>
+          </p>
+          <div className="space-y-2">
+            {pendingAction.commandArgumentDefinitions.map((arg, index) => {
+              const fieldType = arg.type === 'dropdown' ? 'dropdown' : 'text'
+              const label = arg.title || arg.name
+              const placeholder = arg.placeholder || arg.title || arg.name
+              const currentValue = argumentValues[arg.name] ?? ''
+
+              const onKeyDown = (e: React.KeyboardEvent<HTMLInputElement | HTMLSelectElement>): void => {
+                if (e.key === 'Escape') {
+                  e.preventDefault()
+                  cancelPendingAction()
+                  return
+                }
+                if (e.key === 'Tab') {
+                  e.preventDefault()
+                  const nextIndex = e.shiftKey ? index - 1 : index + 1
+                  if (nextIndex >= 0 && nextIndex < pendingAction.commandArgumentDefinitions.length) {
+                    argInputRefs.current[nextIndex]?.focus()
+                  } else {
+                    focusCommandInput()
+                  }
+                  return
+                }
+                if (e.key === 'Enter') {
+                  e.preventDefault()
+                  void submitPendingAction()
+                }
+              }
+
+              return (
+                <div
+                  key={`${pendingAction.commandName}:${arg.name}`}
+                  className="flex items-center gap-3"
+                >
+                  <span className="w-[88px] shrink-0 text-[11px] font-medium text-ink-3">
+                    {label}
+                    {arg.required ? <span className="text-emerald-400/80"> *</span> : null}
+                  </span>
+                  {fieldType === 'dropdown' ? (
+                    <SelectField
+                      ref={(el) => {
+                        argInputRefs.current[index] = el
+                      }}
+                      value={currentValue}
+                      onChange={(e) => {
+                        const next = e.target.value
+                        setArgumentValues((prev) => ({ ...prev, [arg.name]: next }))
+                      }}
+                      onKeyDown={onKeyDown}
+                      className="min-w-0 flex-1"
+                    >
+                      <option value="">Select…</option>
+                      {(arg.data || []).map((option) => {
+                        const optionValue = String(option?.value ?? '')
+                        const optionTitle = option?.title || optionValue
+                        return (
+                          <option key={`${arg.name}:${optionValue}`} value={optionValue}>
+                            {optionTitle}
+                          </option>
+                        )
+                      })}
+                    </SelectField>
+                  ) : (
+                    <TextField
+                      ref={(el) => {
+                        argInputRefs.current[index] = el
+                      }}
+                      type={fieldType}
+                      value={currentValue}
+                      onChange={(e) => {
+                        const next = e.target.value
+                        setArgumentValues((prev) => ({ ...prev, [arg.name]: next }))
+                      }}
+                      onKeyDown={onKeyDown}
+                      placeholder={placeholder}
+                      autoComplete="off"
+                      spellCheck={false}
+                      className="min-w-0 flex-1"
+                    />
+                  )}
+                </div>
+              )
+            })}
+          </div>
+        </form>
+      ) : null}
+
+      {/* Search results — grows to fill space below pinned / other chrome */}
+      {showSearchResults ? (
+        <div
+          className="flex min-h-0 flex-1 flex-col"
+          onWheelCapture={() => setFollowSearchSelection(false)}
+          onMouseLeave={() => {
+            setFollowSearchSelection(false)
+            setSelectedSearch(-1)
+          }}
+        >
+          <div className="glass-card animate-raymes-scale-in flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden px-2 py-2">
+            <GlideList
+              selectedIndex={selectedSearch}
+              itemCount={visibleSearchCount}
+              followSelected={followSearchSelection}
+              className="min-h-0 flex-1 overflow-y-auto"
+            >
+            {visibleSearchResults.map((item, i) => {
+              const pinnedMeta = pinnedMetaById.get(item.id)
+              const isCalc = item.category === 'calculator'
+              const isCurrencyRow = isCalc && item.id.startsWith('currency:')
+              return (
+                <li key={item.id} className="relative z-[1]">
+                  <button
+                    type="button"
+                    className={cx(
+                      'relative flex w-full items-center justify-between gap-3 rounded-raymes-row text-left transition',
+                      isCalc ? 'px-3 py-2.5' : 'px-3 py-2',
+                    )}
+                    onMouseEnter={() => {
+                      setFollowSearchSelection(false)
+                      setSelectedSearch(i)
+                    }}
+                    onMouseDown={(ev) => ev.preventDefault()}
+                    onClick={() => {
+                      setSelectedSearch(i)
+                      void runSelectedSearchResult(item, i + 1)
+                    }}
+                  >
+                    {isCalc ? (
+                      <>
+                        <span className="flex min-w-0 flex-1 items-center gap-2.5">
+                          <span
+                            aria-hidden
+                            className="grid h-7 w-7 shrink-0 place-items-center rounded-raymes-chip border border-white/10 bg-white/[0.04] text-ink-3"
+                          >
+                            {isCurrencyRow ? (
+                              <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
+                                <circle
+                                  cx="7"
+                                  cy="7"
+                                  r="5.25"
+                                  stroke="currentColor"
+                                  strokeWidth="1.1"
+                                />
+                                <path
+                                  d="M9 5.25c-.4-.55-1.1-.95-2-.95-1.1 0-2 .55-2 1.4 0 2 4 1 4 3 0 .85-.9 1.4-2 1.4-.9 0-1.6-.4-2-.95"
+                                  stroke="currentColor"
+                                  strokeWidth="1.1"
+                                  strokeLinecap="round"
+                                />
+                                <path
+                                  d="M7 3.25v7.5"
+                                  stroke="currentColor"
+                                  strokeWidth="1.1"
+                                  strokeLinecap="round"
+                                />
+                              </svg>
+                            ) : (
+                              <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
+                                <rect
+                                  x="2.5"
+                                  y="1.5"
+                                  width="9"
+                                  height="11"
+                                  rx="1.5"
+                                  stroke="currentColor"
+                                  strokeWidth="1.1"
+                                />
+                                <rect x="4.25" y="3.25" width="5.5" height="2" rx="0.4" fill="currentColor" />
+                                <circle cx="5" cy="7.5" r="0.6" fill="currentColor" />
+                                <circle cx="7" cy="7.5" r="0.6" fill="currentColor" />
+                                <circle cx="9" cy="7.5" r="0.6" fill="currentColor" />
+                                <circle cx="5" cy="9.75" r="0.6" fill="currentColor" />
+                                <circle cx="7" cy="9.75" r="0.6" fill="currentColor" />
+                                <circle cx="9" cy="9.75" r="0.6" fill="currentColor" />
+                              </svg>
+                            )}
+                          </span>
+                          <span className="min-w-0 flex-1">
+                            <span className="block truncate font-mono text-[15px] font-semibold tabular-nums text-ink-1">
+                              {item.title}
+                            </span>
+                            <span className="mt-0.5 block truncate text-[11px] text-ink-3">
+                              <span className="text-ink-4">{isCurrencyRow ? 'Currency' : 'Calculator'}</span>
+                              <span className="mx-1.5 text-ink-4">·</span>
+                              <span className="font-mono">{item.subtitle}</span>
+                            </span>
+                          </span>
+                        </span>
+                        <span className="shrink-0 flex items-center gap-1.5 text-[10px] font-mono text-ink-3">
+                          <Kbd>↵</Kbd>
+                          <span>copy</span>
+                        </span>
+                      </>
+                    ) : (
+                      <>
+                        <span className="min-w-0 flex-1">
+                          <span className="block truncate text-[13px] font-medium text-ink-1">{item.title}</span>
+                          <span className="mt-0.5 block truncate text-[11px] text-ink-3">
+                            <span className="text-ink-4">{item.category}</span>
+                            {item.subtitle ? <span className="mx-1.5 text-ink-4">·</span> : null}
+                            {item.subtitle}
+                          </span>
+                        </span>
+                        <span className="shrink-0 flex items-center gap-1.5">
+                          {pinnedMeta ? (
+                            <span className="inline-flex items-center gap-1 rounded-raymes-chip border border-amber-300/30 bg-amber-300/10 px-1.5 py-0.5 text-[10px] text-amber-100/95">
+                              <span className="text-[11px] leading-none">{pinnedMeta.icon}</span>
+                              <Kbd>⌥</Kbd>
+                              <Kbd>{pinnedMeta.slot}</Kbd>
+                            </span>
+                          ) : null}
+                          {i === selectedSearch ? (
+                            <span className="text-[10px] font-mono text-ink-3">
+                              <Kbd>↵</Kbd>
+                            </span>
+                          ) : null}
+                        </span>
+                      </>
+                    )}
+                  </button>
+                </li>
+              )
+            })}
+            </GlideList>
+          </div>
+        </div>
+      ) : null}
+
+      {/* Answer stream */}
+      {showAnswer ? (
+        <div className="glass-card animate-raymes-scale-in px-4 py-3">
+          {!isStreaming && streamText ? (
+            <div className="mb-2 flex justify-end">
+              <button
+                type="button"
+                className="rounded-raymes-chip border border-white/10 bg-white/[0.03] px-2 py-0.5 text-[10px] font-medium uppercase tracking-[0.12em] text-ink-3 transition hover:text-ink-2"
+                onClick={() => {
+                  void speakAnswerText()
+                }}
+              >
+                Read aloud
+              </button>
+            </div>
+          ) : null}
+          {isStreaming && !streamText ? (
+            <p className="raymes-thinking flex items-center gap-2 text-[12px] text-ink-3">
+              <span className="inline-flex gap-1">
+                <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-ink-3" />
+                <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-ink-3 [animation-delay:120ms]" />
+                <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-ink-3 [animation-delay:240ms]" />
+              </span>
+              Thinking
+            </p>
+          ) : (
+            <div className="max-h-48 overflow-y-auto whitespace-pre-wrap text-[13.5px] leading-[1.55] text-ink-1">
+              {streamText ||
+                (emptyAnswer
+                  ? 'No response from the selected provider. Check your provider settings and try again.'
+                  : '')}
+            </div>
+          )}
+          {streamError ? (
+            <p className="mt-2 text-[11.5px] text-rose-300" role="alert">
+              {streamError}
+            </p>
+          ) : null}
+        </div>
+      ) : null}
+
+      {/* Inline status line (errors, intent, action msg) */}
+      {error || lastIntent || actionMsg ? (
+        <div className="px-1">
+          {error ? <Message tone="error">{error}</Message> : null}
+          {lastIntent && !error ? (
+            <Message tone="info">
+              {lastIntent.type}
+              {lastIntent.type === 'extension' && 'name' in lastIntent ? ` · ${lastIntent.name}` : ''}
+            </Message>
+          ) : null}
+          {actionMsg ? <Message>{actionMsg}</Message> : null}
+        </div>
+      ) : null}
+      </div>
+
+      {/* Footer hint bar — same glass-card shell as Clipboard / other views */}
+      <div
+        className={cx(
+          'glass-card shrink-0 px-4 py-2 animate-raymes-scale-in',
+          showSearchResults || showSuggestions || showAnswer ? 'opacity-60' : '',
+        )}
+      >
+        <HintBar>
+          <Hint label="Providers" keys={<Kbd>⌘,</Kbd>} />
+          <Hint label="Pin / Unpin" keys={<><Kbd>⌘</Kbd><Kbd>P</Kbd></>} />
+          <Hint label="Pinned" keys={<><Kbd>⌥</Kbd><Kbd>1-9</Kbd></>} />
+          <Hint label="Save note" keys={<><Kbd>⌘</Kbd><Kbd>N</Kbd></>} />
+          <Hint label="Navigate" keys={<><Kbd>↑</Kbd><Kbd>↓</Kbd></>} />
+          <Hint label="Run" keys={<Kbd>↵</Kbd>} />
+          <Hint
+            label={pinPickerTarget ? 'Cancel picker' : 'Close'}
+            keys={
+              pinPickerTarget ? (
+                <>
+                  <Kbd>Esc</Kbd>
+                  <span className="text-ink-4">·</span>
+                  <Kbd>Tab</Kbd>
+                </>
+              ) : (
+                <Kbd>Esc</Kbd>
+              )
+            }
+          />
+        </HintBar>
+      </div>
+    </div>
+  )
+}
