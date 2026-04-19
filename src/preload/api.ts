@@ -1,3 +1,5 @@
+import type { AgentRunEvent } from '../shared/agent'
+import type { ChatSession, ChatSessionSummary, ChatTurn } from '../shared/chat'
 import type { Intent } from '../shared/intent'
 import type { ClipboardEntry, ClipboardImagePayload } from '../shared/clipboard'
 import type {
@@ -129,4 +131,20 @@ export type RaymesApi = {
   deleteQuickNote: (createdAt: number) => Promise<boolean>
   /** Fired when the user presses ⌘N / Ctrl+N (global) — save command-bar text to notes. */
   onQuickNoteSaveShortcut: (listener: () => void) => () => void
+  /** Kick off a pi-backed agent run. Events stream via `onAgentEvent`. */
+  agentRun: (task: string) => Promise<{ ok: boolean; runId?: string; error?: string }>
+  /** Abort the currently running agent task, if any. */
+  agentCancel: () => Promise<{ ok: boolean }>
+  /** Subscribe to agent run events (stages, message deltas, answers, errors). */
+  onAgentEvent: (listener: (event: AgentRunEvent) => void) => () => void
+  /** Chat session history (AI-mode multi-turn conversations). */
+  chatList: (limit?: number) => Promise<ChatSessionSummary[]>
+  chatGet: (id: string) => Promise<ChatSession | null>
+  chatAppend: (payload: {
+    session: Pick<ChatSession, 'id' | 'title' | 'createdAt' | 'updatedAt'>
+    turn: ChatTurn
+  }) => Promise<{ ok: boolean; error?: string }>
+  chatUpdateTitle: (id: string, title: string) => Promise<{ ok: boolean }>
+  chatDelete: (id: string) => Promise<{ ok: boolean }>
+  chatClear: () => Promise<{ ok: boolean }>
 }

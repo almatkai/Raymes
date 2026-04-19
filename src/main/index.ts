@@ -1,7 +1,7 @@
 import { app, BrowserWindow, globalShortcut, Menu, nativeImage, screen, session, Tray } from 'electron'
 import { join } from 'node:path'
 import { getUiStateRetentionMs } from './llm/configStore'
-import { registerIpcHandlers } from './ipc'
+import { registerIpcHandlers, shutdownIpcHandlers } from './ipc'
 import {
   startClipboardWatcher,
   stopClipboardWatcher,
@@ -406,6 +406,7 @@ app.on('will-quit', () => {
   stopAltSpaceHoldWatcher()
   globalShortcut.unregisterAll()
   stopClipboardWatcher()
+  shutdownIpcHandlers()
 })
 
 app.on('window-all-closed', () => {

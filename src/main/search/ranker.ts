@@ -22,6 +22,7 @@ const CATEGORY_PRIOR: Record<SearchCategory, number> = {
   commands: 0.66,
   snippets: 0.58,
   'quick-links': 0.55,
+  calculator: 0.9,
 }
 
 function normalizeRecency(ms: number): number {

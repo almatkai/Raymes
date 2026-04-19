@@ -478,3 +478,244 @@
     transform: translateY(0);
   }
 }
+
+/* =========================================================================
+   Markdown — `.raymes-md` is the wrapper produced by <Markdown /> and holds
+   every rich-text rule used by agent / answer streams. Kept tight (no big
+   vertical margins) to fit the HUD, but supports code, tables, lists,
+   blockquotes and task checkboxes.
+   ========================================================================= */
+.raymes-md {
+  font-size: 13.5px;
+  line-height: 1.55;
+  color: var(--ink-1, #f3efff);
+  word-break: break-word;
+}
+.raymes-md > *:first-child {
+  margin-top: 0;
+}
+.raymes-md > *:last-child {
+  margin-bottom: 0;
+}
+.raymes-md p {
+  margin: 0.4em 0;
+}
+.raymes-md h1,
+.raymes-md h2,
+.raymes-md h3,
+.raymes-md h4,
+.raymes-md h5,
+.raymes-md h6 {
+  font-weight: 600;
+  margin: 0.9em 0 0.4em;
+  line-height: 1.25;
+  letter-spacing: -0.01em;
+  color: var(--ink-0, #ffffff);
+}
+.raymes-md h1 {
+  font-size: 1.35em;
+}
+.raymes-md h2 {
+  font-size: 1.2em;
+}
+.raymes-md h3 {
+  font-size: 1.08em;
+}
+.raymes-md h4,
+.raymes-md h5,
+.raymes-md h6 {
+  font-size: 1em;
+  color: var(--ink-2, #d9d3ee);
+}
+.raymes-md a {
+  color: #b8a8ff;
+  text-decoration: underline;
+  text-decoration-color: rgba(184, 168, 255, 0.45);
+  text-underline-offset: 2px;
+  transition: color 0.12s ease;
+}
+.raymes-md a:hover {
+  color: #d7ccff;
+}
+.raymes-md strong {
+  font-weight: 600;
+  color: var(--ink-0, #ffffff);
+}
+.raymes-md em {
+  font-style: italic;
+}
+.raymes-md del {
+  text-decoration: line-through;
+  opacity: 0.7;
+}
+.raymes-md ul,
+.raymes-md ol {
+  margin: 0.35em 0 0.5em;
+  padding-left: 1.35em;
+}
+.raymes-md ul {
+  list-style: disc;
+}
+.raymes-md ol {
+  list-style: decimal;
+}
+.raymes-md li {
+  margin: 0.2em 0;
+}
+.raymes-md li > p {
+  margin: 0.15em 0;
+}
+.raymes-md li::marker {
+  color: rgba(216, 205, 255, 0.55);
+}
+.raymes-md input[type='checkbox'] {
+  appearance: none;
+  width: 13px;
+  height: 13px;
+  border-radius: 3px;
+  border: 1px solid rgba(255, 255, 255, 0.25);
+  background: rgba(255, 255, 255, 0.04);
+  margin-right: 0.4em;
+  position: relative;
+  vertical-align: -1px;
+}
+.raymes-md input[type='checkbox']:checked {
+  background: #8a74ff;
+  border-color: #8a74ff;
+}
+.raymes-md input[type='checkbox']:checked::after {
+  content: '';
+  position: absolute;
+  top: 1px;
+  left: 3.5px;
+  width: 3px;
+  height: 6px;
+  border: solid #fff;
+  border-width: 0 1.5px 1.5px 0;
+  transform: rotate(45deg);
+}
+.raymes-md blockquote {
+  margin: 0.6em 0;
+  padding: 0.25em 0.8em;
+  border-left: 2px solid rgba(184, 168, 255, 0.45);
+  background: rgba(255, 255, 255, 0.03);
+  border-radius: 0 6px 6px 0;
+  color: var(--ink-2, #d9d3ee);
+}
+.raymes-md blockquote > *:first-child {
+  margin-top: 0;
+}
+.raymes-md blockquote > *:last-child {
+  margin-bottom: 0;
+}
+.raymes-md hr {
+  border: 0;
+  border-top: 1px solid rgba(255, 255, 255, 0.08);
+  margin: 0.9em 0;
+}
+.raymes-md table {
+  width: 100%;
+  border-collapse: collapse;
+  margin: 0.6em 0;
+  font-size: 12.5px;
+  overflow: hidden;
+  border-radius: 8px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+}
+.raymes-md thead {
+  background: rgba(255, 255, 255, 0.04);
+}
+.raymes-md th,
+.raymes-md td {
+  padding: 6px 10px;
+  text-align: left;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+  vertical-align: top;
+}
+.raymes-md tr:last-child td {
+  border-bottom: 0;
+}
+.raymes-md th {
+  font-weight: 600;
+  color: var(--ink-1, #f3efff);
+  letter-spacing: 0.01em;
+}
+.raymes-md img {
+  max-width: 100%;
+  border-radius: 8px;
+  margin: 0.4em 0;
+}
+
+/* Inline code */
+.raymes-md code:not(pre code) {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, 'Liberation Mono', monospace;
+  font-size: 0.9em;
+  padding: 1px 5px;
+  border-radius: 5px;
+  background: rgba(255, 255, 255, 0.08);
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  color: #ffd7f5;
+  white-space: break-spaces;
+}
+
+/* Code block shell (highlight.js theme paints the <code> interior) */
+.raymes-md pre {
+  position: relative;
+  margin: 0.6em 0;
+  padding: 0;
+  background: #1b1725;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 10px;
+  overflow: hidden;
+  font-size: 12.5px;
+  line-height: 1.5;
+}
+.raymes-md pre code,
+.raymes-md pre code.hljs {
+  display: block;
+  padding: 0.75em 0.9em;
+  background: transparent;
+  border: 0;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, 'Liberation Mono', monospace;
+  color: #e8e2ff;
+  overflow-x: auto;
+  white-space: pre;
+  border-radius: 0;
+}
+.raymes-md-code-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 5px 10px 5px 12px;
+  background: rgba(255, 255, 255, 0.03);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, 'Liberation Mono', monospace;
+  font-size: 10.5px;
+}
+.raymes-md-code-lang {
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+  color: rgba(233, 226, 255, 0.55);
+}
+.raymes-md-code-copy {
+  appearance: none;
+  background: transparent;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  color: rgba(233, 226, 255, 0.7);
+  padding: 1px 8px;
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 10.5px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  transition:
+    color 0.12s ease,
+    border-color 0.12s ease,
+    background 0.12s ease;
+}
+.raymes-md-code-copy:hover {
+  color: #ffffff;
+  border-color: rgba(255, 255, 255, 0.22);
+  background: rgba(255, 255, 255, 0.05);
+}
+

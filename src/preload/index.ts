@@ -1,5 +1,7 @@
 import { contextBridge, ipcRenderer, type IpcRendererEvent } from 'electron'
 import type { ProviderId } from '../shared/llmConfig'
+import { AGENT_IPC, type AgentRunEvent } from '../shared/agent'
+import { CHAT_IPC, type ChatSession, type ChatTurn } from '../shared/chat'
 import { IPC_CHANNELS } from '../shared/ipc'
 import type { PermissionId } from '../shared/permissions'
 import type { SearchAction, SearchExecuteContext } from '../shared/search'
@@ -147,4 +149,28 @@ contextBridge.exposeInMainWorld('raymes', {
       ipcRenderer.removeListener(channel, handler)
     }
   },
+  agentRun: (task: string): Promise<{ ok: boolean; runId?: string; error?: string }> =>
+    ipcRenderer.invoke(AGENT_IPC.RUN, task),
+  agentCancel: (): Promise<{ ok: boolean }> => ipcRenderer.invoke(AGENT_IPC.CANCEL),
+  onAgentEvent: (listener: (event: AgentRunEvent) => void) => {
+    const handler = (_event: IpcRendererEvent, payload: AgentRunEvent): void => {
+      if (payload && typeof payload === 'object' && typeof payload.type === 'string') {
+        listener(payload)
+      }
+    }
+    ipcRenderer.on(AGENT_IPC.EVENT, handler)
+    return (): void => {
+      ipcRenderer.removeListener(AGENT_IPC.EVENT, handler)
+    }
+  },
+  chatList: (limit?: number) => ipcRenderer.invoke(CHAT_IPC.LIST, limit),
+  chatGet: (id: string) => ipcRenderer.invoke(CHAT_IPC.GET, id),
+  chatAppend: (payload: {
+    session: Pick<ChatSession, 'id' | 'title' | 'createdAt' | 'updatedAt'>
+    turn: ChatTurn
+  }) => ipcRenderer.invoke(CHAT_IPC.APPEND, payload),
+  chatUpdateTitle: (id: string, title: string) =>
+    ipcRenderer.invoke(CHAT_IPC.UPDATE_TITLE, { id, title }),
+  chatDelete: (id: string) => ipcRenderer.invoke(CHAT_IPC.DELETE, id),
+  chatClear: () => ipcRenderer.invoke(CHAT_IPC.CLEAR),
 })

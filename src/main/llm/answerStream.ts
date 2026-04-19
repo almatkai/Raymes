@@ -40,9 +40,12 @@ export async function streamAnswerToRenderer(
 
   let fullText = ''
   try {
+    console.log('[streamAnswerToRenderer] using provider:', provider.name)
     const stream = await provider.chat(messages, undefined, { signal })
+    console.log('[streamAnswerToRenderer] stream started')
     for await (const delta of stream) {
       if (signal?.aborted) {
+        console.log('[streamAnswerToRenderer] signal aborted')
         done()
         return
       }
@@ -51,15 +54,18 @@ export async function streamAnswerToRenderer(
         token(delta.text)
       }
     }
+    console.log('[streamAnswerToRenderer] stream finished, full text length:', fullText.length)
     if (cfg.memoryEnabled === true) {
       rememberMemory(`User: ${userText}\nAssistant: ${fullText.slice(0, 1200)}`, 'conversation')
     }
     done()
   } catch (e) {
     if (signal?.aborted) {
+      console.log('[streamAnswerToRenderer] aborted in catch')
       done()
       return
     }
+    console.error('[streamAnswerToRenderer] error:', e)
     err(e instanceof Error ? e.message : String(e))
     done()
   }

@@ -1,0 +1,700 @@
+import {
+  type FormEvent,
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+} from 'react'
+import type { AgentRunEvent, Stage } from '../shared/agent'
+import {
+  CHAT_CONTINUATION_WINDOW_MS,
+  type ChatSession,
+  type ChatSessionSummary,
+  type ChatTurn,
+} from '../shared/chat'
+import type { AiChatBoot } from '../shared/aiChatSurface'
+import { RAYMES_AI_NEW_CHAT_EVENT } from '../shared/aiChatSurface'
+import { Hint, HintBar, Kbd, cx } from './ui/primitives'
+import { Markdown } from './ui/Markdown'
+import { setCommandSurfaceEscapeConsumer } from './escapeGate'
+import {
+  AgentStageList,
+  buildAgentPromptFromChat,
+  makeChatId,
+  summarizeChatTitle,
+} from './agentChat/shared'
+
+function focusChatInput(): void {
+  document.getElementById('ai-chat-input')?.focus()
+}
+
+export default function AgentChatView({
+  boot,
+  onBack,
+  onOpenProviders,
+}: {
+  boot: AiChatBoot
+  onBack: () => void
+  onOpenProviders: () => void
+}): JSX.Element {
+  const [chatSession, setChatSession] = useState<ChatSession | null>(null)
+  const [chatHistory, setChatHistory] = useState<ChatSessionSummary[]>([])
+  const [historyOpen, setHistoryOpen] = useState(false)
+  const [draft, setDraft] = useState('')
+  const [runLogs, setRunLogs] = useState<string[]>([])
+  const [logsOpen, setLogsOpen] = useState(true)
+
+  const chatThreadRef = useRef<HTMLDivElement>(null)
+  const historyOpenRef = useRef(false)
+  useEffect(() => {
+    historyOpenRef.current = historyOpen
+  }, [historyOpen])
+
+  const chatSessionRef = useRef<ChatSession | null>(null)
+  const agentStreamTextRef = useRef('')
+  const agentStagesRef = useRef<Stage[]>([])
+  const agentStatusRef = useRef<'idle' | 'running' | 'done' | 'error'>('idle')
+  const agentErrorRef = useRef<string | null>(null)
+  const currentAgentRunIdRef = useRef<string | null>(null)
+
+  const [agentStages, setAgentStages] = useState<Stage[]>([])
+  const [agentStreamText, setAgentStreamText] = useState('')
+  const [agentStatus, setAgentStatus] = useState<
+    'idle' | 'running' | 'done' | 'error'
+  >('idle')
+  const [agentError, setAgentError] = useState<string | null>(null)
+
+  useEffect(() => {
+    chatSessionRef.current = chatSession
+  }, [chatSession])
+  useEffect(() => {
+    agentStreamTextRef.current = agentStreamText
+  }, [agentStreamText])
+  useEffect(() => {
+    agentStagesRef.current = agentStages
+  }, [agentStages])
+  useEffect(() => {
+    agentStatusRef.current = agentStatus
+  }, [agentStatus])
+  useEffect(() => {
+    agentErrorRef.current = agentError
+  }, [agentError])
+
+  const refreshChatHistory = useCallback(async (): Promise<void> => {
+    try {
+      const rows = await window.raymes.chatList(40)
+      setChatHistory(rows)
+    } catch {
+      /* ignore */
+    }
+  }, [])
+
+  const startNewChat = useCallback((): void => {
+    if (currentAgentRunIdRef.current) {
+      void window.raymes.agentCancel()
+      currentAgentRunIdRef.current = null
+    }
+    setChatSession(null)
+    chatSessionRef.current = null
+    setAgentStages([])
+    setAgentStreamText('')
+    setAgentError(null)
+    setAgentStatus('idle')
+    setHistoryOpen(false)
+    setRunLogs([])
+    focusChatInput()
+  }, [])
+
+  const loadChatSession = useCallback(async (id: string): Promise<void> => {
+    try {
+      const full = await window.raymes.chatGet(id)
+      if (!full) return
+      if (currentAgentRunIdRef.current) {
+        void window.raymes.agentCancel()
+        currentAgentRunIdRef.current = null
+      }
+      setChatSession(full)
+      chatSessionRef.current = full
+      setAgentStages([])
+      setAgentStreamText('')
+      setAgentError(null)
+      setAgentStatus('idle')
+      setHistoryOpen(false)
+      setRunLogs([])
+      focusChatInput()
+    } catch {
+      /* ignore */
+    }
+  }, [])
+
+  const deleteChatFromHistory = useCallback(
+    async (id: string): Promise<void> => {
+      try {
+        await window.raymes.chatDelete(id)
+        if (chatSessionRef.current?.id === id) {
+          setChatSession(null)
+          chatSessionRef.current = null
+          setAgentStages([])
+          setAgentStreamText('')
+          setAgentError(null)
+          setAgentStatus('idle')
+        }
+        void refreshChatHistory()
+      } catch {
+        /* ignore */
+      }
+    },
+    [refreshChatHistory],
+  )
+
+  const commitUserTurnAndRun = useCallback(
+    async (task: string): Promise<void> => {
+      const trimmed = task.trim()
+      if (!trimmed) return
+      const now = Date.now()
+      const existing = chatSessionRef.current
+      const isContinuation =
+        !!existing && now - existing.updatedAt < CHAT_CONTINUATION_WINDOW_MS
+
+      const session: ChatSession = isContinuation
+        ? existing!
+        : {
+            id: makeChatId(),
+            title: summarizeChatTitle(trimmed),
+            createdAt: now,
+            updatedAt: now,
+            turns: [],
+          }
+
+      const userTurn: ChatTurn = {
+        id: makeChatId(),
+        role: 'user',
+        text: trimmed,
+        createdAt: now,
+      }
+      const nextSession: ChatSession = {
+        ...session,
+        updatedAt: now,
+        turns: [...session.turns, userTurn],
+      }
+      setChatSession(nextSession)
+      chatSessionRef.current = nextSession
+
+      void window.raymes
+        .chatAppend({
+          session: {
+            id: nextSession.id,
+            title: nextSession.title,
+            createdAt: nextSession.createdAt,
+            updatedAt: nextSession.updatedAt,
+          },
+          turn: userTurn,
+        })
+        .then(() => refreshChatHistory())
+
+      setAgentError(null)
+      setAgentStages([])
+      setAgentStreamText('')
+      setAgentStatus('running')
+      setRunLogs([])
+
+      const prompt = buildAgentPromptFromChat(nextSession, trimmed)
+      try {
+        const result = await window.raymes.agentRun(prompt)
+        if (!result.ok) {
+          setAgentError(result.error || 'Agent failed to start')
+          setAgentStatus('error')
+        }
+      } catch (err) {
+        setAgentError(err instanceof Error ? err.message : 'Agent failed to start')
+        setAgentStatus('error')
+      }
+    },
+    [refreshChatHistory],
+  )
+
+  const bootKey =
+    boot.kind === 'submit' ? `submit:${boot.prompt}` : boot.kind === 'panel' ? 'panel' : 'newChat'
+
+  // First paint: honour boot + hydrate history.
+  useEffect(() => {
+    let cancelled = false
+    void (async () => {
+      try {
+        await refreshChatHistory()
+        if (cancelled) return
+
+        if (boot.kind === 'newChat') {
+          startNewChat()
+          return
+        }
+
+        const rows = await window.raymes.chatList(40)
+        if (cancelled) return
+        setChatHistory(rows)
+
+        if (boot.kind === 'panel') {
+          const mostRecent = rows[0]
+          if (
+            mostRecent &&
+            Date.now() - mostRecent.updatedAt < CHAT_CONTINUATION_WINDOW_MS
+          ) {
+            const full = await window.raymes.chatGet(mostRecent.id)
+            if (!cancelled && full) {
+              setChatSession(full)
+              chatSessionRef.current = full
+            }
+          }
+          return
+        }
+
+        if (boot.kind === 'submit') {
+          let session: ChatSession | null = null
+          const mostRecent = rows[0]
+          if (
+            mostRecent &&
+            Date.now() - mostRecent.updatedAt < CHAT_CONTINUATION_WINDOW_MS
+          ) {
+            session = await window.raymes.chatGet(mostRecent.id)
+          }
+          if (cancelled) return
+          if (session) {
+            chatSessionRef.current = session
+            setChatSession(session)
+          }
+          await commitUserTurnAndRun(boot.prompt)
+        }
+      } catch {
+        /* ignore */
+      }
+    })()
+    return () => {
+      cancelled = true
+    }
+    // bootKey replaces `boot` so parent object identity does not retrigger.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [bootKey])
+
+  useEffect(() => {
+    const el = chatThreadRef.current
+    if (!el) return
+    el.scrollTop = el.scrollHeight
+  }, [chatSession, agentStreamText, agentStages.length, runLogs.length])
+
+  useEffect(() => {
+    return window.raymes.onAgentEvent((event: AgentRunEvent) => {
+      if (
+        event.type !== 'start' &&
+        currentAgentRunIdRef.current !== null &&
+        event.runId !== currentAgentRunIdRef.current
+      ) {
+        return
+      }
+
+      switch (event.type) {
+        case 'start':
+          currentAgentRunIdRef.current = event.runId
+          agentStagesRef.current = []
+          agentStreamTextRef.current = ''
+          agentErrorRef.current = null
+          agentStatusRef.current = 'running'
+          setRunLogs([])
+          setAgentStages([])
+          setAgentStreamText('')
+          setAgentError(null)
+          setAgentStatus('running')
+          return
+        case 'log':
+          if (event.source === 'stderr') {
+            setRunLogs((prev) => [...prev.slice(-400), event.line])
+          }
+          return
+        case 'stage': {
+          const prev = agentStagesRef.current
+          const idx = prev.findIndex((s) => s.index === event.stage.index)
+          const next = idx < 0 ? [...prev, event.stage] : prev.slice()
+          if (idx >= 0) next[idx] = event.stage
+          agentStagesRef.current = next
+          setAgentStages(next)
+          return
+        }
+        case 'message': {
+          const next = agentStreamTextRef.current + event.delta
+          agentStreamTextRef.current = next
+          setAgentStreamText(next)
+          return
+        }
+        case 'answer':
+          agentStreamTextRef.current = event.text
+          setAgentStreamText(event.text)
+          return
+        case 'error':
+          agentErrorRef.current = event.message
+          agentStatusRef.current = 'error'
+          setAgentError(event.message)
+          setAgentStatus('error')
+          return
+        case 'done': {
+          const finalText = agentStreamTextRef.current
+          const finalStages = agentStagesRef.current.slice()
+          const activeSession = chatSessionRef.current
+          const hadError =
+            agentStatusRef.current === 'error' || agentErrorRef.current !== null
+          const nextStatus: 'done' | 'error' = hadError ? 'error' : 'done'
+          agentStatusRef.current = nextStatus
+          setAgentStatus(nextStatus)
+          currentAgentRunIdRef.current = null
+
+          if (activeSession) {
+            const hasPayload = finalText.trim() || finalStages.length > 0 || hadError
+            const errorText = hadError
+              ? agentErrorRef.current ?? 'Agent finished without a response.'
+              : undefined
+            const fallbackError = hasPayload ? errorText : 'Agent finished without a response.'
+            const turn: ChatTurn = {
+              id: makeChatId(),
+              role: 'assistant',
+              text: finalText,
+              stages: finalStages.length > 0 ? finalStages : undefined,
+              error: fallbackError,
+              createdAt: Date.now(),
+            }
+            const nextSession: ChatSession = {
+              ...activeSession,
+              updatedAt: turn.createdAt,
+              turns: [...activeSession.turns, turn],
+            }
+            chatSessionRef.current = nextSession
+            setChatSession(nextSession)
+            void window.raymes
+              .chatAppend({
+                session: {
+                  id: nextSession.id,
+                  title: nextSession.title,
+                  createdAt: nextSession.createdAt,
+                  updatedAt: nextSession.updatedAt,
+                },
+                turn,
+              })
+              .then(() => refreshChatHistory())
+            agentStreamTextRef.current = ''
+            agentStagesRef.current = []
+            setAgentStreamText('')
+            setAgentStages([])
+          }
+          return
+        }
+        default:
+          return
+      }
+    })
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
+  useEffect(() => {
+    const onNewChat = (): void => {
+      startNewChat()
+    }
+    window.addEventListener(RAYMES_AI_NEW_CHAT_EVENT, onNewChat)
+    return () => window.removeEventListener(RAYMES_AI_NEW_CHAT_EVENT, onNewChat)
+  }, [startNewChat])
+
+  useEffect(() => {
+    setCommandSurfaceEscapeConsumer(() => {
+      if (currentAgentRunIdRef.current) {
+        void window.raymes.agentCancel()
+        setAgentStatus('idle')
+        setAgentError(null)
+        setAgentStages([])
+        setAgentStreamText('')
+        focusChatInput()
+        return true
+      }
+      if (historyOpenRef.current) {
+        setHistoryOpen(false)
+        focusChatInput()
+        return true
+      }
+      return false
+    })
+    return () => {
+      setCommandSurfaceEscapeConsumer(null)
+    }
+  }, [])
+
+  useEffect(() => {
+    requestAnimationFrame(() => focusChatInput())
+  }, [])
+
+  async function onSubmitMessage(e: FormEvent): Promise<void> {
+    e.preventDefault()
+    const text = draft.trim()
+    if (!text) return
+    setDraft('')
+    await commitUserTurnAndRun(text)
+  }
+
+  return (
+    <div
+      aria-label="AI Chat"
+      tabIndex={-1}
+      className="flex h-full min-h-0 w-full flex-col gap-2 outline-none"
+    >
+      <div className="glass-card flex min-h-0 flex-1 flex-col overflow-hidden px-4 py-3 animate-raymes-scale-in">
+        <div className="relative mb-3 flex shrink-0 items-center justify-between gap-2">
+          <div className="min-w-0 flex-1">
+            <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-violet-200">
+              AI Chat
+            </p>
+            {chatSession ? (
+              <p className="truncate text-[12.5px] text-ink-1">{chatSession.title}</p>
+            ) : (
+              <p className="text-[12.5px] text-ink-3">Ask the coding agent (pi)</p>
+            )}
+          </div>
+          <div className="flex shrink-0 items-center gap-1.5">
+            <button
+              type="button"
+              className="rounded-raymes-chip border border-white/10 bg-white/[0.03] px-2 py-0.5 text-[10px] font-medium uppercase tracking-[0.12em] text-ink-3 transition hover:text-ink-1"
+              onClick={() => {
+                void onOpenProviders()
+              }}
+            >
+              Providers
+            </button>
+            {agentStatus === 'running' ? (
+              <button
+                type="button"
+                className="rounded-raymes-chip border border-white/10 bg-white/[0.03] px-2 py-0.5 text-[10px] font-medium uppercase tracking-[0.12em] text-ink-3 transition hover:text-ink-1"
+                onClick={() => {
+                  void window.raymes.agentCancel()
+                }}
+              >
+                Cancel
+              </button>
+            ) : null}
+            <button
+              type="button"
+              className="rounded-raymes-chip border border-white/10 bg-white/[0.03] px-2 py-0.5 text-[10px] font-medium uppercase tracking-[0.12em] text-ink-3 transition hover:text-ink-1"
+              onClick={() => {
+                setHistoryOpen((v) => !v)
+                if (!historyOpen) void refreshChatHistory()
+              }}
+              aria-expanded={historyOpen}
+            >
+              History
+            </button>
+            <button
+              type="button"
+              className="rounded-raymes-chip border border-white/10 bg-white/[0.03] px-2 py-0.5 text-[10px] font-medium uppercase tracking-[0.12em] text-ink-3 transition hover:text-ink-1"
+              onClick={() => {
+                startNewChat()
+              }}
+            >
+              New
+            </button>
+            <button
+              type="button"
+              className="rounded-raymes-chip border border-white/10 bg-white/[0.03] px-2 py-0.5 text-[10px] font-medium uppercase tracking-[0.12em] text-ink-3 transition hover:text-ink-1"
+              onClick={() => {
+                void onBack()
+              }}
+            >
+              Back
+            </button>
+          </div>
+
+          {historyOpen ? (
+            <div className="glass-card absolute right-6 top-[72px] z-20 w-[320px] overflow-hidden py-1.5 shadow-[0_12px_40px_rgba(0,0,0,0.45)]">
+              <div className="flex items-center justify-between px-3 pb-1.5 pt-1 text-[10px] font-semibold uppercase tracking-[0.14em] text-ink-4">
+                <span>Past chats</span>
+                {chatHistory.length > 0 ? (
+                  <button
+                    type="button"
+                    className="text-[10px] text-ink-4 transition hover:text-rose-300"
+                    onClick={() => {
+                      void window.raymes.chatClear().then(() => {
+                        setChatHistory([])
+                        setHistoryOpen(false)
+                      })
+                    }}
+                  >
+                    Clear all
+                  </button>
+                ) : null}
+              </div>
+              <ul className="max-h-64 overflow-y-auto">
+                {chatHistory.length === 0 ? (
+                  <li className="px-3 py-2 text-[12px] text-ink-4">No saved chats yet.</li>
+                ) : (
+                  chatHistory.map((row) => {
+                    const isActive = chatSession?.id === row.id
+                    return (
+                      <li key={row.id} className="group relative">
+                        <button
+                          type="button"
+                          className={cx(
+                            'flex w-full items-start justify-between gap-3 px-3 py-2 text-left transition',
+                            isActive
+                              ? 'bg-violet-500/10 text-ink-1'
+                              : 'hover:bg-white/[0.04] text-ink-2 hover:text-ink-1',
+                          )}
+                          onClick={() => {
+                            void loadChatSession(row.id)
+                          }}
+                        >
+                          <span className="min-w-0 flex-1">
+                            <span className="block truncate text-[12.5px] font-medium">
+                              {row.title || 'Untitled chat'}
+                            </span>
+                            {row.preview ? (
+                              <span className="mt-0.5 block truncate text-[11px] text-ink-4">
+                                {row.preview}
+                              </span>
+                            ) : null}
+                          </span>
+                          <span
+                            role="button"
+                            tabIndex={-1}
+                            aria-label="Delete chat"
+                            className="mt-0.5 shrink-0 rounded-raymes-chip border border-transparent px-1.5 py-0.5 text-[10px] text-ink-4 opacity-0 transition hover:border-rose-400/40 hover:text-rose-300 group-hover:opacity-100"
+                            onClick={(ev) => {
+                              ev.stopPropagation()
+                              void deleteChatFromHistory(row.id)
+                            }}
+                          >
+                            ✕
+                          </span>
+                        </button>
+                      </li>
+                    )
+                  })
+                )}
+              </ul>
+            </div>
+          ) : null}
+        </div>
+
+        <div
+          ref={chatThreadRef}
+          className="flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto pb-2"
+        >
+          {chatSession && chatSession.turns.length > 0
+            ? chatSession.turns.map((turn) =>
+                turn.role === 'user' ? (
+                  <div key={turn.id} className="flex justify-end">
+                    <div className="max-w-[88%] rounded-raymes-row border border-violet-400/30 bg-violet-500/12 px-3 py-2 text-[13.5px] leading-[1.5] text-ink-1">
+                      {turn.text}
+                    </div>
+                  </div>
+                ) : (
+                  <div key={turn.id} className="flex flex-col gap-1.5">
+                    {turn.stages && turn.stages.length > 0 ? (
+                      <AgentStageList stages={turn.stages} compact />
+                    ) : null}
+                    {turn.text ? (
+                      <Markdown text={turn.text} />
+                    ) : turn.error ? null : (
+                      <p className="text-[12.5px] italic text-ink-4">(no text response)</p>
+                    )}
+                    {turn.error ? (
+                      <p className="text-[11.5px] text-rose-300" role="alert">
+                        {turn.error}
+                      </p>
+                    ) : null}
+                  </div>
+                ),
+              )
+            : null}
+
+          {agentStatus === 'running' || agentStages.length > 0 || agentStreamText ? (
+            <div className="flex flex-col gap-1.5">
+              {agentStages.length > 0 ? <AgentStageList stages={agentStages} /> : null}
+              {agentStreamText ? (
+                <Markdown text={agentStreamText} streaming={agentStatus === 'running'} />
+              ) : agentStatus === 'running' ? (
+                <p className="raymes-thinking flex items-center gap-2 text-[12px] text-ink-3">
+                  <span className="inline-flex gap-1">
+                    <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-ink-3" />
+                    <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-ink-3 [animation-delay:120ms]" />
+                    <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-ink-3 [animation-delay:240ms]" />
+                  </span>
+                  Planning
+                </p>
+              ) : null}
+            </div>
+          ) : null}
+
+          {agentError ? (
+            <p className="text-[11.5px] text-rose-300" role="alert">
+              {agentError}
+            </p>
+          ) : null}
+
+          {runLogs.length > 0 ? (
+            <div className="rounded-raymes-row border border-amber-400/20 bg-amber-500/5">
+              <button
+                type="button"
+                className="flex w-full items-center justify-between px-2 py-1.5 text-left text-[10px] font-semibold uppercase tracking-[0.12em] text-amber-200/90"
+                onClick={() => setLogsOpen((v) => !v)}
+                aria-expanded={logsOpen}
+              >
+                Agent log (stderr)
+                <span className="text-ink-4">{logsOpen ? '▼' : '▶'}</span>
+              </button>
+              {logsOpen ? (
+                <pre className="max-h-40 overflow-auto whitespace-pre-wrap break-words px-2 pb-2 font-mono text-[10px] leading-relaxed text-amber-100/85">
+                  {runLogs.join('\n')}
+                </pre>
+              ) : null}
+            </div>
+          ) : null}
+
+          {!chatSession || chatSession.turns.length === 0 ? (
+            agentStatus === 'idle' && !agentStreamText ? (
+              <div className="flex flex-1 items-center justify-center px-4 py-6 text-center">
+                <div className="max-w-[440px] space-y-2 text-ink-3">
+                  <p className="text-[13px] text-ink-2">Pi agent chat</p>
+                  <p className="text-[12px] text-ink-4">
+                    Type below and press Enter. If nothing appears,                     Agent log (below) shows stderr from the pi CLI (model auth, config, crashes). The
+                    same lines are printed in the main process console as{' '}
+                    <span className="font-mono text-ink-2">[raymes:agent]</span>.
+                  </p>
+                </div>
+              </div>
+            ) : null
+          ) : null}
+        </div>
+
+        <form
+          className="shrink-0 border-t border-white/[0.06] pt-3"
+          onSubmit={(ev) => void onSubmitMessage(ev)}
+        >
+          <input
+            id="ai-chat-input"
+            type="text"
+            value={draft}
+            onChange={(e) => setDraft(e.target.value)}
+            placeholder="Message the agent…"
+            autoComplete="off"
+            spellCheck={false}
+            className="w-full rounded-raymes-row border border-white/10 bg-white/[0.04] px-3 py-2 font-display text-[14px] text-ink-1 outline-none ring-0 placeholder:text-ink-4 focus:border-violet-400/40"
+          />
+        </form>
+      </div>
+
+      <div className="glass-card shrink-0 px-4 py-2 animate-raymes-scale-in">
+        <HintBar>
+          <Hint label="Providers" keys={<Kbd>⌘,</Kbd>} />
+          <Hint label="New chat" keys={<><Kbd>⌘</Kbd><Kbd>N</Kbd></>} />
+          {agentStatus === 'running' ? (
+            <Hint label="Stop" keys={<Kbd>Esc</Kbd>} />
+          ) : (
+            <Hint label="Send" keys={<Kbd>↵</Kbd>} />
+          )}
+          <Hint label="Back" keys={<Kbd>Esc</Kbd>} />
+        </HintBar>
+      </div>
+    </div>
+  )
+}

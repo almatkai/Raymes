@@ -1,5 +1,17 @@
 import { BrowserWindow, ipcMain, shell } from 'electron'
 import { setSuppressBlurHide } from './windowState'
+import { AGENT_IPC, type AgentRunEvent, type Stage } from '../shared/agent'
+import { CHAT_IPC, type ChatSession, type ChatTurn } from '../shared/chat'
+import { disposeSharedBridge, getSharedBridge } from './agent/bridge'
+import {
+  appendChatTurn,
+  clearAllChatSessions,
+  deleteChatSession,
+  getChatSession,
+  listChatSessions,
+  updateChatSessionTitle,
+  upsertChatSession,
+} from './chat/sessionStore'
 import {
   IPC_CHANNELS,
   parseAiActionRequest,
@@ -93,6 +105,64 @@ const LLM_DEFAULTS = {
 } as const
 
 let answerAbort: AbortController | null = null
+let agentAbort: AbortController | null = null
+let agentRunId: string | null = null
+
+function sendAgentEvent(sender: Electron.WebContents, event: AgentRunEvent): void {
+  if (!sender.isDestroyed()) sender.send(AGENT_IPC.EVENT, event)
+}
+
+function startAgentRun(sender: Electron.WebContents, task: string): string {
+  agentAbort?.abort()
+  agentAbort = new AbortController()
+  const ac = agentAbort
+  const runId = (agentRunId = `agent-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`)
+  const bridge = getSharedBridge()
+
+  sendAgentEvent(sender, { type: 'start', runId, task })
+
+  const onStage = (stage: Stage): void => sendAgentEvent(sender, { type: 'stage', runId, stage })
+  const onMessageDelta = (delta: string): void =>
+    sendAgentEvent(sender, { type: 'message', runId, delta })
+  const onAnswer = (text: string): void => sendAgentEvent(sender, { type: 'answer', runId, text })
+
+  const onStderrLine = (line: string): void => {
+    sendAgentEvent(sender, { type: 'log', runId, source: 'stderr', line })
+  }
+
+  console.log('[raymes:agent] run', { runId, taskPreview: task.slice(0, 120) })
+
+  void bridge
+    .run(task, {
+      runId,
+      signal: ac.signal,
+      onStage,
+      onMessageDelta,
+      onAnswer,
+      onStderrLine,
+    })
+    .then(() => {
+      sendAgentEvent(sender, { type: 'done', runId })
+    })
+    .catch((err: unknown) => {
+      const message = err instanceof Error ? err.message : String(err)
+      sendAgentEvent(sender, { type: 'error', runId, message })
+      sendAgentEvent(sender, { type: 'done', runId })
+    })
+    .finally(() => {
+      if (agentAbort === ac) agentAbort = null
+      if (agentRunId === runId) agentRunId = null
+    })
+
+  return runId
+}
+
+/** Called from `main/index.ts` on `will-quit` to flush subprocesses. */
+export function shutdownIpcHandlers(): void {
+  answerAbort?.abort()
+  agentAbort?.abort()
+  disposeSharedBridge()
+}
 
 export function registerIpcHandlers(getWindow: () => BrowserWindow | null): void {
   ipcMain.handle('llm-config-get', async () => ({
@@ -308,9 +378,11 @@ export function registerIpcHandlers(getWindow: () => BrowserWindow | null): void
 
   ipcMain.handle(IPC_CHANNELS.QUERY, async (event, input: unknown) => {
     const text = typeof input === 'string' ? input : String(input ?? '')
+    console.log('[IPC_CHANNELS.QUERY] received input:', text)
     const intent = await classifyIntent(text)
-    console.log('[query] intent:', intent)
+    console.log('[IPC_CHANNELS.QUERY] classified intent:', intent)
     if (intent.type === 'answer' || intent.type === 'ai') {
+      console.log('[IPC_CHANNELS.QUERY] starting streamAnswerToRenderer')
       answerAbort?.abort()
       answerAbort = new AbortController()
       const ac = answerAbort
@@ -318,11 +390,124 @@ export function registerIpcHandlers(getWindow: () => BrowserWindow | null): void
         if (answerAbort === ac) answerAbort = null
       })
     }
+    if (intent.type === 'agent') {
+      console.log('[IPC_CHANNELS.QUERY] starting startAgentRun')
+      startAgentRun(event.sender, intent.input)
+    }
     return intent
   })
 
   ipcMain.handle('cancel', async () => {
     answerAbort?.abort()
+    agentAbort?.abort()
+  })
+
+  ipcMain.handle(AGENT_IPC.RUN, async (event, raw: unknown) => {
+    const task = typeof raw === 'string' ? raw : String(raw ?? '')
+    if (!task.trim()) {
+      return { ok: false, error: 'Task is empty' }
+    }
+    const runId = startAgentRun(event.sender, task)
+    return { ok: true, runId }
+  })
+
+  ipcMain.handle(AGENT_IPC.CANCEL, async () => {
+    agentAbort?.abort()
+    return { ok: true }
+  })
+
+  // --- Chat sessions ------------------------------------------------------
+  // The renderer owns the conversation state machine (30s continuation window,
+  // active session, etc.) and tells us what to persist. We just provide
+  // durable storage + list/get/delete/clear operations against sqlite.
+  ipcMain.handle(CHAT_IPC.LIST, async (_event, rawLimit: unknown) => {
+    const limit =
+      typeof rawLimit === 'number' && Number.isFinite(rawLimit) && rawLimit > 0
+        ? Math.floor(rawLimit)
+        : undefined
+    return listChatSessions(limit)
+  })
+
+  ipcMain.handle(CHAT_IPC.GET, async (_event, id: unknown) => {
+    if (typeof id !== 'string' || !id) return null
+    return getChatSession(id)
+  })
+
+  ipcMain.handle(CHAT_IPC.APPEND, async (_event, payload: unknown) => {
+    if (!payload || typeof payload !== 'object') {
+      return { ok: false, error: 'Invalid chat append payload' }
+    }
+    const body = payload as {
+      session?: Partial<ChatSession>
+      turn?: Partial<ChatTurn>
+    }
+    const s = body.session
+    const t = body.turn
+    if (
+      !s ||
+      typeof s.id !== 'string' ||
+      typeof s.title !== 'string' ||
+      typeof s.createdAt !== 'number' ||
+      typeof s.updatedAt !== 'number'
+    ) {
+      return { ok: false, error: 'Invalid session' }
+    }
+    if (
+      !t ||
+      typeof t.id !== 'string' ||
+      (t.role !== 'user' && t.role !== 'assistant') ||
+      typeof t.text !== 'string' ||
+      typeof t.createdAt !== 'number'
+    ) {
+      return { ok: false, error: 'Invalid turn' }
+    }
+    try {
+      upsertChatSession({
+        id: s.id,
+        title: s.title,
+        createdAt: s.createdAt,
+        updatedAt: s.updatedAt,
+      })
+      appendChatTurn(s.id, {
+        id: t.id,
+        role: t.role,
+        text: t.text,
+        stages: Array.isArray(t.stages) ? (t.stages as Stage[]) : undefined,
+        error: typeof t.error === 'string' ? t.error : undefined,
+        createdAt: t.createdAt,
+      })
+      return { ok: true }
+    } catch (err) {
+      return { ok: false, error: err instanceof Error ? err.message : String(err) }
+    }
+  })
+
+  ipcMain.handle(CHAT_IPC.UPDATE_TITLE, async (_event, payload: unknown) => {
+    if (!payload || typeof payload !== 'object') return { ok: false }
+    const body = payload as { id?: unknown; title?: unknown }
+    if (typeof body.id !== 'string' || typeof body.title !== 'string') {
+      return { ok: false }
+    }
+    try {
+      updateChatSessionTitle(body.id, body.title)
+      return { ok: true }
+    } catch {
+      return { ok: false }
+    }
+  })
+
+  ipcMain.handle(CHAT_IPC.DELETE, async (_event, id: unknown) => {
+    if (typeof id !== 'string' || !id) return { ok: false }
+    return { ok: deleteChatSession(id) }
+  })
+
+  ipcMain.handle(CHAT_IPC.CLEAR, async () => {
+    try {
+      clearAllChatSessions()
+      return { ok: true }
+    } catch {
+      return { ok: false }
+    }
   })
 
   ipcMain.handle('get-extensions', async () => {

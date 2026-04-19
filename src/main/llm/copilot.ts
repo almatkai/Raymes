@@ -65,8 +65,10 @@ export class CopilotProvider implements LLMProvider {
   }
 
   async chat(messages: Message[], tools?: Tool[], options?: ChatOptions): Promise<AsyncIterable<Delta>> {
+    console.log('[CopilotProvider] chat request to', COPILOT_CHAT)
     const token = await this.refreshIfNeeded(options?.signal)
     if (!token.trim()) {
+      console.error('[CopilotProvider] missing token')
       throw new Error('GitHub Copilot: missing token. Add a PAT or complete device sign-in in Providers.')
     }
     const body: Record<string, unknown> = {
@@ -77,6 +79,7 @@ export class CopilotProvider implements LLMProvider {
     if (tools?.length) {
       body.tools = toOpenAITools(tools)
     }
+    console.log('[CopilotProvider] payload size:', JSON.stringify(body).length, 'bytes')
     const res = await fetch(COPILOT_CHAT, {
       method: 'POST',
       headers: {
@@ -88,8 +91,10 @@ export class CopilotProvider implements LLMProvider {
       body: JSON.stringify(body),
       signal: options?.signal,
     })
+    console.log('[CopilotProvider] response status:', res.status, res.statusText)
     if (!res.ok) {
       const errBody = await res.text().catch(() => '')
+      console.error('[CopilotProvider] error body:', errBody)
       throw new Error(`Copilot error ${res.status}: ${errBody.slice(0, 500)}`)
     }
     return parseOpenAISSE(res, options?.signal)

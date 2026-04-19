@@ -5,9 +5,13 @@ import type { SearchResult } from '../shared/search'
 import { Hint, HintBar, Kbd, Message, SelectField, TextField, cx } from './ui/primitives'
 import { setCommandSurfaceEscapeConsumer } from './escapeGate'
 import { GlideList } from './ui/GlideList'
+import { Markdown } from './ui/Markdown'
 import { useHoldToSpeak } from './hooks/useHoldToSpeak'
 import { evaluateExpression, type CalcResult } from './calculator'
 import { parseCurrencyQuery } from './currency/parseCurrencyQuery'
+import type { ChatSessionSummary } from '../shared/chat'
+import type { AiChatBoot } from '../shared/aiChatSurface'
+import { RAYMES_QUICK_NOTE_SHORTCUT_EVENT } from '../shared/aiChatSurface'
 import { getPreferredDefaultTarget } from './currency/currencyPreferences'
 import { useCurrencyConversion } from './hooks/useCurrencyConversion'
 
@@ -267,7 +271,23 @@ function SearchIcon(): JSX.Element {
   )
 }
 
+/* AI Mode Icon */
+function AiIcon(): JSX.Element {
+  return (
+    <svg width="14" height="14" viewBox="0 0 14 14" fill="none" aria-hidden>
+      <path
+        d="M7 11.5c2.485 0 4.5-2.015 4.5-4.5S9.485 2.5 7 2.5 2.5 4.515 2.5 7c0 1.05.36 2.015.964 2.783L3 11l1.217-.464c.768.604 1.733.964 2.783.964z"
+        stroke="currentColor"
+        strokeWidth="1.3"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+    </svg>
+  )
+}
+
 export default function CommandBar({
+  onOpenAiChat,
   onOpenProviders,
   onOpenSettings,
   onOpenExtensions,
@@ -276,6 +296,7 @@ export default function CommandBar({
   onOpenSnippetsPage,
   onOpenNotesPage,
 }: {
+  onOpenAiChat: (boot: AiChatBoot) => void
   onOpenProviders: () => void
   onOpenSettings: () => void
   onOpenExtensions: () => void
@@ -295,6 +316,7 @@ export default function CommandBar({
   const [recentSlash, setRecentSlash] = useState<string[]>([])
   const [recentExtensionCommands, setRecentExtensionCommands] = useState<string[]>([])
   const [pinnedCommands, setPinnedCommands] = useState<PinnedCommand[]>([])
+  const [chatHistory, setChatHistory] = useState<ChatSessionSummary[]>([])
   const [draggingPinId, setDraggingPinId] = useState<string | null>(null)
   const [pinPickerTarget, setPinPickerTarget] = useState<SearchResult | null>(null)
   const [pinPickerIconIndex, setPinPickerIconIndex] = useState(0)
@@ -319,6 +341,12 @@ export default function CommandBar({
       }, 4000)
     }
   }
+  // Space prefix = AI mode in the launcher; the full chat UI lives on the
+  // dedicated AI Chat surface (see App.tsx + AgentChatView).
+  // Trigger AI mode if input starts with a space, or if it ends with exactly two spaces.
+  const isAiMode = value.startsWith(' ') || value.endsWith('  ')
+  const agentTask = isAiMode ? value.trim() : ''
+
   const [pendingAction, setPendingAction] = useState<
     | {
         extensionId: string
@@ -343,6 +371,7 @@ export default function CommandBar({
     setRecentSlash(readRecentSlashCommands())
     setRecentExtensionCommands(readRecentExtensionCommands())
     setPinnedCommands(readPinnedCommands())
+    void window.raymes.chatList(8).then(setChatHistory)
   }, [])
 
   useEffect(() => {
@@ -372,8 +401,15 @@ export default function CommandBar({
   }, [])
 
   useEffect(() => {
-    return window.raymes.onQuickNoteSaveShortcut(() => {
-      const text = valueRef.current.trim()
+    const onQuickNoteShortcut = (): void => {
+      const currentValue = valueRef.current
+      if (currentValue.startsWith(' ')) {
+        onOpenAiChat({ kind: 'newChat' })
+        showActionMsg('Opening new chat')
+        return
+      }
+
+      const text = currentValue.trim()
       if (!text) {
         showActionMsg('Type text in the command bar, then press Cmd+N to save a note')
         return
@@ -395,8 +431,10 @@ export default function CommandBar({
         .catch(() => {
           showActionMsg('Could not save quick note')
         })
-    })
-  }, [])
+    }
+    window.addEventListener(RAYMES_QUICK_NOTE_SHORTCUT_EVENT, onQuickNoteShortcut)
+    return () => window.removeEventListener(RAYMES_QUICK_NOTE_SHORTCUT_EVENT, onQuickNoteShortcut)
+  }, [onOpenAiChat])
 
   // Hold-to-Speak pipeline: captures mic audio via MediaRecorder, resamples
   // to 16 kHz mono WAV in the renderer, and hands the bytes to the main
@@ -412,8 +450,17 @@ export default function CommandBar({
         return
       }
       setValue((prev) => {
-        if (!prev.trim()) return cleaned
-        if (prev.endsWith(' ')) return `${prev}${cleaned}`
+        const isAiModeActive = prev.startsWith(' ') || prev.endsWith('  ')
+        if (!prev.trim()) {
+          // If the buffer was literally just spaces (prompting AI mode),
+          // preserve those spaces so the transcription result is treated as an AI prompt.
+          // Note: if it started with at least one space, we keep it as an AI prompt.
+          return isAiModeActive ? ` ${cleaned}` : cleaned
+        }
+        if (isAiModeActive) {
+          // If already in AI mode (e.g. ends in two spaces), append.
+          return `${prev}${cleaned}`
+        }
         return `${prev} ${cleaned}`
       })
     },
@@ -425,6 +472,8 @@ export default function CommandBar({
   const slashQuery = value.trimStart()
   const slashTerm = slashQuery.startsWith('/') ? slashQuery.slice(1).toLowerCase() : ''
   const isSlashInput = slashQuery.startsWith('/')
+
+  const showChatHistory = isAiMode && !agentTask.trim() && chatHistory.length > 0
 
   // Live calculator: we evaluate on every keystroke in the renderer so
   // there's no IPC latency. Only when the buffer is not a slash command —
@@ -908,6 +957,13 @@ export default function CommandBar({
         focusCommandInput()
         return true
       }
+      if (valueRef.current.startsWith(' ')) {
+        // Space prefix = AI mode. Escape drops the prefix and returns to
+        // normal mode without hiding the launcher.
+        setValue((v) => v.replace(/^ +/, ''))
+        focusCommandInput()
+        return true
+      }
       return false
     })
     return () => {
@@ -1027,6 +1083,24 @@ export default function CommandBar({
       return
     }
 
+    // AI mode: open the dedicated AI Chat surface and submit the prompt
+    // there (multi-turn chat, logs, history — see AgentChatView).
+    if (isAiMode) {
+      if (showChatHistory) {
+        const selectedChat = chatHistory[selectedSearch]
+        if (selectedChat) {
+          onOpenAiChat({ kind: 'resume', sessionId: selectedChat.id })
+          setValue('  ')
+          return
+        }
+      }
+      const task = agentTask.trim()
+      if (!task) return
+      onOpenAiChat({ kind: 'submit', prompt: task })
+      setValue('  ')
+      return
+    }
+
     if (!isSlashInput && visibleSearchResults.length > 0) {
       const selected = visibleSearchResults[selectedSearch]
       if (selected) {
@@ -1108,9 +1182,12 @@ export default function CommandBar({
     }
   }
 
-  const showAnswer = isStreaming || Boolean(streamText) || Boolean(streamError) || emptyAnswer
+  // Don't stack the LLM answer card while the user is in AI mode (agent
+  // chat opens on its own surface).
+  const showAnswer =
+    !isAiMode && (isStreaming || Boolean(streamText) || Boolean(streamError) || emptyAnswer)
   const showSuggestions = isSlashInput && suggestions.length > 0
-  const showSearchResults = !isSlashInput && visibleSearchCount > 0
+  const showSearchResults = !isSlashInput && !isAiMode && visibleSearchCount > 0
 
   const handleInputKeyDown = (e: React.KeyboardEvent<HTMLInputElement>): void => {
     if (pinPickerTarget) {
@@ -1129,6 +1206,17 @@ export default function CommandBar({
         setFollowSuggestionSelection(true)
         setSelectedSuggestion((i) => Math.max(i - 1, 0))
       }
+    } else if (showChatHistory) {
+      if (e.key === 'ArrowDown') {
+        e.preventDefault()
+        setFollowSearchSelection(true)
+        setSelectedSearch((i) => Math.min(i + 1, chatHistory.length - 1))
+      }
+      if (e.key === 'ArrowUp') {
+        e.preventDefault()
+        setFollowSearchSelection(true)
+        setSelectedSearch((i) => Math.max(i - 1, 0))
+      }
     } else if (visibleSearchCount) {
       if (e.key === 'ArrowDown') {
         e.preventDefault()
@@ -1141,6 +1229,12 @@ export default function CommandBar({
         setSelectedSearch((i) => Math.max(i - 1, 0))
       }
     }
+
+    if (e.key === 'h' && (e.metaKey || e.ctrlKey)) {
+      e.preventDefault()
+      onOpenClipboardPage()
+    }
+
     if (e.key === 'Tab') {
       e.preventDefault()
       if (pendingAction) {
@@ -1173,9 +1267,18 @@ export default function CommandBar({
       <div className="glass-card shrink-0 px-4 py-3 animate-raymes-scale-in">
         <form className="relative w-full" onSubmit={(ev) => void onSubmit(ev)}>
           <div className="flex items-center gap-3">
-            <span className="text-ink-3">
-              <SearchIcon />
+            <span className={cx(isAiMode ? 'text-violet-300' : 'text-ink-3')}>
+              {isAiMode ? <AiIcon /> : <SearchIcon />}
             </span>
+            {isAiMode ? (
+              <span
+                aria-label="AI mode"
+                className="inline-flex shrink-0 items-center gap-1 rounded-raymes-chip border border-violet-400/40 bg-violet-500/15 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-[0.14em] text-violet-200"
+              >
+                <span className="h-1.5 w-1.5 rounded-full bg-violet-300" />
+                AI
+              </span>
+            ) : null}
             <input
               id="command-input"
               type="text"
@@ -1186,7 +1289,9 @@ export default function CommandBar({
                 setSelectedSearch(0)
               }}
               onKeyDown={handleInputKeyDown}
-              placeholder="Ask anything or type / for commands"
+              placeholder={
+                isAiMode ? 'Ask or command the agent…' : 'Ask anything or type / for commands'
+              }
               autoComplete="off"
               spellCheck={false}
               className="w-full border-0 bg-transparent p-0 font-display text-[15px] font-normal text-ink-1 outline-none ring-0 placeholder:text-ink-4 focus:ring-0"
@@ -1219,9 +1324,11 @@ export default function CommandBar({
                 {isDictating ? 'Listening' : isTranscribing ? 'Transcribing…' : 'Hold to speak'}
               </button>
             ) : null}
-            <span className="shrink-0 font-mono text-[10px] tabular-nums text-ink-4">
-              {provider} · {model}
-            </span>
+            {isAiMode ? (
+              <span className="shrink-0 font-mono text-[10px] tabular-nums text-ink-4">
+                {provider} · {model}
+              </span>
+            ) : null}
           </div>
         </form>
       </div>
@@ -1478,6 +1585,73 @@ export default function CommandBar({
         </form>
       ) : null}
 
+      {/* AI mode chat history */}
+      {showChatHistory ? (
+        <div
+          className="flex min-h-0 flex-1 flex-col"
+          onWheelCapture={() => setFollowSearchSelection(false)}
+          onMouseLeave={() => {
+            setFollowSearchSelection(false)
+            setSelectedSearch(-1)
+          }}
+        >
+          <div className="glass-card animate-raymes-scale-in flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden px-2 py-2">
+            <div className="mb-2 px-3 pt-1 text-[10px] font-bold uppercase tracking-[0.12em] text-violet-300">
+              Recent Chats
+            </div>
+            <GlideList
+              selectedIndex={selectedSearch}
+              itemCount={chatHistory.length}
+              followSelected={followSearchSelection}
+            >
+              {chatHistory.map((chat, i) => (
+                <li key={chat.id} className="relative z-[1]">
+                  <button
+                    type="button"
+                    className="group relative flex w-full items-center gap-3 rounded-raymes-row px-3 py-2 text-left transition"
+                    onMouseEnter={() => {
+                      setFollowSearchSelection(false)
+                      setSelectedSearch(i)
+                    }}
+                    onMouseDown={(ev) => ev.preventDefault()}
+                    onClick={() => {
+                      onOpenAiChat({ kind: 'resume', sessionId: chat.id })
+                      setValue('  ')
+                    }}
+                  >
+                    <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-violet-500/10 text-violet-300 group-hover:bg-violet-500/20">
+                      <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
+                        <path
+                          d="M7 11.5c2.485 0 4.5-2.015 4.5-4.5S9.485 2.5 7 2.5 2.5 4.515 2.5 7c0 1.05.36 2.015.964 2.783L3 11l1.217-.464c.768.604 1.733.964 2.783.964z"
+                          stroke="currentColor"
+                          strokeWidth="1.2"
+                          strokeLinecap="round"
+                          strokeLinejoin="round"
+                        />
+                      </svg>
+                    </div>
+                    <div className="flex min-w-0 flex-1 flex-col">
+                      <span className="truncate text-[13px] font-medium text-ink-1">
+                        {chat.title || 'Untitled Chat'}
+                      </span>
+                      <span className="truncate text-[11px] text-ink-3">
+                        {chat.preview || 'No preview available'}
+                      </span>
+                    </div>
+                    <div className="shrink-0 text-[10px] font-medium text-ink-4">
+                      {new Date(chat.updatedAt).toLocaleDateString([], {
+                        month: 'short',
+                        day: 'numeric',
+                      })}
+                    </div>
+                  </button>
+                </li>
+              ))}
+            </GlideList>
+          </div>
+        </div>
+      ) : null}
+
       {/* Search results — grows to fill space below pinned / other chrome */}
       {showSearchResults ? (
         <div
@@ -1644,11 +1818,15 @@ export default function CommandBar({
               Thinking
             </p>
           ) : (
-            <div className="max-h-48 overflow-y-auto whitespace-pre-wrap text-[13.5px] leading-[1.55] text-ink-1">
-              {streamText ||
-                (emptyAnswer
-                  ? 'No response from the selected provider. Check your provider settings and try again.'
-                  : '')}
+            <div className="max-h-48 overflow-y-auto">
+              {streamText ? (
+                <Markdown text={streamText} streaming={isStreaming} />
+              ) : emptyAnswer ? (
+                <p className="text-[13.5px] leading-[1.55] text-ink-1">
+                  No response from the selected provider. Check your provider settings and try
+                  again.
+                </p>
+              ) : null}
             </div>
           )}
           {streamError ? (
@@ -1682,26 +1860,36 @@ export default function CommandBar({
         )}
       >
         <HintBar>
-          <Hint label="Providers" keys={<Kbd>⌘,</Kbd>} />
-          <Hint label="Pin / Unpin" keys={<><Kbd>⌘</Kbd><Kbd>P</Kbd></>} />
-          <Hint label="Pinned" keys={<><Kbd>⌥</Kbd><Kbd>1-9</Kbd></>} />
-          <Hint label="Save note" keys={<><Kbd>⌘</Kbd><Kbd>N</Kbd></>} />
-          <Hint label="Navigate" keys={<><Kbd>↑</Kbd><Kbd>↓</Kbd></>} />
-          <Hint label="Run" keys={<Kbd>↵</Kbd>} />
-          <Hint
-            label={pinPickerTarget ? 'Cancel picker' : 'Close'}
-            keys={
-              pinPickerTarget ? (
-                <>
-                  <Kbd>Esc</Kbd>
-                  <span className="text-ink-4">·</span>
-                  <Kbd>Tab</Kbd>
-                </>
-              ) : (
-                <Kbd>Esc</Kbd>
-              )
-            }
-          />
+          {isAiMode ? (
+            <>
+              <Hint label="Providers" keys={<Kbd>⌘,</Kbd>} />
+              <Hint label="Open chat" keys={<Kbd>↵</Kbd>} />
+              <Hint label="New chat" keys={<><Kbd>⌘</Kbd><Kbd>N</Kbd></>} />
+              <Hint label="Exit AI" keys={<Kbd>Esc</Kbd>} />
+            </>
+          ) : (
+            <>
+              <Hint label="Pin / Unpin" keys={<><Kbd>⌘</Kbd><Kbd>P</Kbd></>} />
+              <Hint label="Pinned" keys={<><Kbd>⌥</Kbd><Kbd>1-9</Kbd></>} />
+              <Hint label="Save note" keys={<><Kbd>⌘</Kbd><Kbd>N</Kbd></>} />
+              <Hint label="Navigate" keys={<><Kbd>↑</Kbd><Kbd>↓</Kbd></>} />
+              <Hint label="Run" keys={<Kbd>↵</Kbd>} />
+              <Hint
+                label={pinPickerTarget ? 'Cancel picker' : 'Close'}
+                keys={
+                  pinPickerTarget ? (
+                    <>
+                      <Kbd>Esc</Kbd>
+                      <span className="text-ink-4">·</span>
+                      <Kbd>Tab</Kbd>
+                    </>
+                  ) : (
+                    <Kbd>Esc</Kbd>
+                  )
+                }
+              />
+            </>
+          )}
         </HintBar>
       </div>
     </div>
