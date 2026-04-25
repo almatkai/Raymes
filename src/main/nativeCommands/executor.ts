@@ -337,6 +337,13 @@ export async function executeNativeCommand(id: NativeCommandId): Promise<NativeC
         }
       }
 
+      case 'open-emoji-picker': {
+        return {
+          ok: false,
+          message: 'Emoji Picker is a UI navigation — open the launcher to browse it.',
+        }
+      }
+
       case 'brew-update': {
         try {
           const out = await runShell('brew update')

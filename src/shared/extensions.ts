@@ -5,6 +5,8 @@ export type ExtensionManifest = {
   author: string
   version: string
   repository?: string
+  downloadCount?: number
+  owner?: string
 }
 
 export type InstalledExtension = ExtensionManifest & {

@@ -35,6 +35,7 @@ import {
   writeFileSync,
 } from 'node:fs'
 import { tmpdir } from 'node:os'
+import Fuse from 'fuse.js'
 import type {
   ExtensionIntegrityReport,
   ExtensionManifest,
@@ -362,45 +363,68 @@ async function fetchRaycastPackage(slug: string): Promise<RaycastPackageJson> {
   return parsed
 }
 
+const AWESOME_RAYCAST_DATA = 'https://raw.githubusercontent.com/j3lte/awesome-raycast/main/data/data.json'
+
+async function fetchRaycastCatalogFromAwesome(): Promise<ExtensionManifest[]> {
+  const raw = await fetchText(AWESOME_RAYCAST_DATA)
+  const data = JSON.parse(raw) as Array<{
+    name: string
+    title: string
+    description: string
+    author: string
+    download_count?: number
+    owner?: string
+  }>
+
+  return data.map((item) => ({
+    id: `raycast.${item.name}`,
+    name: item.title || normalizeNameFromSlug(item.name),
+    description: item.description || `Raycast extension: ${item.title}`,
+    author: item.author || 'Raycast Community',
+    version: 'latest',
+    repository: `${RAYCAST_EXTENSIONS_REPO}/tree/main/${RAYCAST_EXTENSIONS_PATH}/${item.name}`,
+    downloadCount: item.download_count,
+    owner: item.owner,
+  }))
+}
+
 async function fetchRaycastCatalogFromGithub(): Promise<ExtensionManifest[]> {
-  const commit = await fetchGithubJson<{ tree: { sha: string } }>(
-    `https://api.github.com/repos/raycast/extensions/git/commits/${RAYCAST_EXTENSIONS_REF}`,
-  )
+  // Legacy fallback in case awesome-raycast is down
+  try {
+    const commit = await fetchGithubJson<{ tree: { sha: string } }>(
+      `https://api.github.com/repos/raycast/extensions/git/commits/${RAYCAST_EXTENSIONS_REF}`,
+    )
 
-  const rootTree = await fetchGithubJson<GithubTreeResponse>(
-    `https://api.github.com/repos/raycast/extensions/git/trees/${commit.tree.sha}`,
-  )
+    const rootTree = await fetchGithubJson<GithubTreeResponse>(
+      `https://api.github.com/repos/raycast/extensions/git/trees/${commit.tree.sha}`,
+    )
 
-  const extensionsDir = rootTree.tree.find(
-    (entry) => entry.type === 'tree' && entry.path === RAYCAST_EXTENSIONS_PATH,
-  )
-  if (!extensionsDir) {
-    throw new Error('Could not find /extensions directory in Raycast repository tree')
+    const extensionsDir = rootTree.tree.find(
+      (entry) => entry.type === 'tree' && entry.path === RAYCAST_EXTENSIONS_PATH,
+    )
+    if (!extensionsDir) return []
+
+    const extensionsTree = await fetchGithubJson<GithubTreeResponse>(
+      `https://api.github.com/repos/raycast/extensions/git/trees/${extensionsDir.sha}`,
+    )
+
+    return extensionsTree.tree
+      .filter((entry) => entry.type === 'tree')
+      .map((entry) => {
+        const slug = entry.path
+        const name = normalizeNameFromSlug(slug)
+        return {
+          id: `raycast.${slug}`,
+          name,
+          description: `Raycast extension: ${name}`,
+          author: 'Raycast Community',
+          version: RAYCAST_EXTENSIONS_REF.slice(0, 7),
+          repository: `${RAYCAST_EXTENSIONS_REPO}/tree/${RAYCAST_EXTENSIONS_REF}/${RAYCAST_EXTENSIONS_PATH}/${slug}`,
+        } satisfies ExtensionManifest
+      })
+  } catch {
+    return []
   }
-
-  const extensionsTree = await fetchGithubJson<GithubTreeResponse>(
-    `https://api.github.com/repos/raycast/extensions/git/trees/${extensionsDir.sha}`,
-  )
-
-  if (extensionsTree.truncated === true) {
-    throw new Error('Raycast extensions tree response is truncated; cannot build full catalog safely')
-  }
-
-  return extensionsTree.tree
-    .filter((entry) => entry.type === 'tree')
-    .map((entry) => {
-      const slug = entry.path
-      const name = normalizeNameFromSlug(slug)
-      return {
-        id: `raycast.${slug}`,
-        name,
-        description: `Raycast extension: ${name}`,
-        author: 'Raycast Community',
-        version: RAYCAST_EXTENSIONS_REF.slice(0, 7),
-        repository: `${RAYCAST_EXTENSIONS_REPO}/tree/${RAYCAST_EXTENSIONS_REF}/${RAYCAST_EXTENSIONS_PATH}/${slug}`,
-      } satisfies ExtensionManifest
-    })
-    .sort(byName)
 }
 
 /** Download the extension to a temp directory, then atomically move it to
@@ -665,30 +689,54 @@ export async function getStoreCatalog(): Promise<ExtensionManifest[]> {
   }
 
   try {
-    const catalog = await fetchRaycastCatalogFromGithub()
+    const catalog = await fetchRaycastCatalogFromAwesome()
     catalogCache = { fetchedAt: now, catalog }
     return catalog
   } catch (error) {
-    console.warn('[extensions] failed to refresh Raycast catalog:', error)
+    console.warn('[extensions] failed to refresh Raycast catalog from Awesome:', error)
+    try {
+      const catalog = await fetchRaycastCatalogFromGithub()
+      if (catalog.length > 0) {
+        catalogCache = { fetchedAt: now, catalog }
+        return catalog
+      }
+    } catch (innerError) {
+      console.warn('[extensions] failed to refresh Raycast catalog from Github:', innerError)
+    }
     return catalogCache?.catalog ?? []
   }
 }
 
 function scoreMatch(item: ExtensionManifest, q: string): number {
-  const fields = [item.id, item.name, item.description, item.author].map((v) => v.toLowerCase())
-  const [id, name, description, author] = fields
-  const slug = id.startsWith('raycast.') ? id.slice('raycast.'.length) : id
+  const name = item.name.toLowerCase()
+  const description = item.description.toLowerCase()
+  const slug = item.id.startsWith('raycast.') ? item.id.slice('raycast.'.length).toLowerCase() : item.id.toLowerCase()
 
-  if (slug === q || name === q) return 500
-  if (slug.startsWith(q)) return 300
-  if (name.startsWith(q)) return 250
-  if (slug.split(/[-_\s.]/g).some((token) => token === q)) return 220
-  if (name.split(/[-_\s.]/g).some((token) => token === q)) return 200
-  if (slug.includes(q)) return 120
-  if (name.includes(q)) return 100
-  if (description.includes(q)) return 40
-  if (author.includes(q)) return 20
-  return -1
+  let score = 0
+
+  // Exact matches
+  if (name === q || slug === q) score += 1000
+  else if (name.startsWith(q) || slug.startsWith(q)) score += 800
+
+  // Word boundary matches in name
+  const nameWords = name.split(/[-_\s.]/g)
+  if (nameWords.some((word) => word.startsWith(q))) score += 600
+
+  // Word boundary matches in description
+  const descWords = description.split(/[-_\s.]/g)
+  if (descWords.some((word) => word.startsWith(q))) score += 500
+
+  // Inclusion matches
+  if (name.includes(q) || slug.includes(q)) score += 200
+  if (description.includes(q)) score += 100
+
+  // Popularity boost
+  if (item.downloadCount && item.downloadCount > 0) {
+    // 10k downloads = ~200 boost, 100k = ~250 boost, 1M = ~300 boost
+    score += Math.log10(item.downloadCount) * 50
+  }
+
+  return score
 }
 
 export function listInstalledExtensions(): InstalledExtension[] {
@@ -699,13 +747,48 @@ export function listInstalledExtensions(): InstalledExtension[] {
 export async function searchStoreExtensions(query: string): Promise<ExtensionManifest[]> {
   const q = query.trim().toLowerCase()
   const catalog = await getStoreCatalog()
-  if (!q) return catalog
+  if (!q) {
+    return catalog.sort((a, b) => (b.downloadCount ?? 0) - (a.downloadCount ?? 0))
+  }
 
-  return catalog
+  // 1. Initial scoring using the heuristic
+  const scored = catalog
     .map((item) => ({ item, score: scoreMatch(item, q) }))
-    .filter((entry) => entry.score >= 0)
+    .filter((entry) => entry.score > 0)
+
+  // 2. Fuzzy matching using Fuse as a secondary signal
+  const fuse = new Fuse(catalog, {
+    keys: [
+      { name: 'name', weight: 0.7 },
+      { name: 'description', weight: 0.3 },
+    ],
+    threshold: 0.4,
+    includeScore: true,
+  })
+
+  const fuzzyResults = fuse.search(q)
+  const fuzzyMap = new Map<string, number>()
+  fuzzyResults.forEach((res) => {
+    // Fuse score: 0 is perfect, 1 is worst.
+    // We map it to a 0-500 boost.
+    if (res.score !== undefined) {
+      fuzzyMap.set(res.item.id, (1 - res.score) * 500)
+    }
+  })
+
+  // 3. Combine scores
+  const finalResults = catalog
+    .map((item) => {
+      let score = scoreMatch(item, q)
+      const fuzzyBoost = fuzzyMap.get(item.id) ?? 0
+      score += fuzzyBoost
+
+      return { item, score }
+    })
+    .filter((entry) => entry.score > 0)
     .sort((a, b) => b.score - a.score || byName(a.item, b.item))
-    .map((entry) => entry.item)
+
+  return finalResults.map((entry) => entry.item)
 }
 
 export async function installExtension(extensionId: string): Promise<InstalledExtension> {

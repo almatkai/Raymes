@@ -10,6 +10,7 @@ export type IndexedDocument = {
   updatedAt: number
   sourcePath?: string
   sourceMtime?: number
+  popularity?: number
 }
 
 export type SearchProvider = {

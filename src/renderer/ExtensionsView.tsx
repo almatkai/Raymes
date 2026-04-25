@@ -22,10 +22,21 @@ export default function ExtensionsView({ onBack }: { onBack: () => void }): JSX.
     setLoading(true)
     try {
       const [installedList, storeList] = await Promise.all([
-        window.raymes.listInstalledExtensions(),
-        window.raymes.searchStoreExtensions(query),
+        window.raymes.extensionList(),
+        window.raymes.extensionSearchStore(query),
       ])
-      setInstalled(installedList)
+      setInstalled(
+        installedList.map((entry) => ({
+          id: entry.id,
+          name: entry.name,
+          description: entry.description,
+          author: entry.author || 'Raycast Community',
+          owner: entry.owner,
+          downloadCount: entry.downloadCount,
+          version: entry.version,
+          installedAt: entry.installedAt,
+        })),
+      )
       setStore(storeList)
     } finally {
       setLoading(false)
@@ -97,9 +108,18 @@ export default function ExtensionsView({ onBack }: { onBack: () => void }): JSX.
                   className="glass-inset rounded-raymes-row p-3 transition hover:bg-white/[0.04]"
                 >
                   <div className="flex items-start justify-between gap-3">
-                    <div className="min-w-0">
-                      <p className="truncate text-[13.5px] font-medium text-ink-1">{ext.name}</p>
-                      <p className="mt-0.5 truncate font-mono text-[10.5px] text-ink-4">{ext.id}</p>
+                    <div className="min-w-0 flex-1">
+                      <div className="flex items-center gap-2">
+                        <p className="truncate text-[13.5px] font-medium text-ink-1">{ext.name}</p>
+                        {ext.downloadCount !== undefined ? (
+                          <span className="shrink-0 text-[10px] text-ink-4">
+                            ↓ {ext.downloadCount.toLocaleString()}
+                          </span>
+                        ) : null}
+                      </div>
+                      <p className="mt-0.5 truncate font-mono text-[10.5px] text-ink-4">
+                        {ext.owner || ext.author} · {ext.id} · v{ext.version}
+                      </p>
                       <p className="mt-1.5 text-[12px] leading-relaxed text-ink-3 line-clamp-2">
                         {ext.description}
                       </p>
@@ -109,8 +129,8 @@ export default function ExtensionsView({ onBack }: { onBack: () => void }): JSX.
                       disabled={loading}
                       onClick={() => {
                         const action = isInstalled
-                          ? window.raymes.uninstallExtension(ext.id)
-                          : window.raymes.installExtension(ext.id)
+                          ? window.raymes.extensionUninstall(ext.id)
+                          : window.raymes.extensionInstall(ext.id)
                         void action
                           .then(() => {
                             setMsg({

@@ -33,20 +33,31 @@ function clipboardPath(): string {
   return join(storeDir(), 'clipboard.json')
 }
 
-function readClipboardDb(): ClipboardDb {
+// Session cache
+let _readClipboardDb: ClipboardDb | null = null
+let _cacheTimestamp: number = 0
+const CACHE_TTL = 10 * 1000 // 10 seconds
+
+async function ensureDbLoaded(): Promise<void> {
+  if (_readClipboardDb && Date.now() - _cacheTimestamp < CACHE_TTL) {
+    return
+  }
   try {
     const raw = readFileSync(clipboardPath(), 'utf8')
     const parsed = JSON.parse(raw) as Partial<ClipboardDb>
-    return {
-      items: Array.isArray(parsed.items) ? (parsed.items as ClipboardEntry[]) : [],
+    _readClipboardDb = {
+      items: Array.isArray(parsed.items) ? parsed.items : []
     }
   } catch {
-    return { items: [] }
+    _readClipboardDb = { items: [] }
   }
+  _cacheTimestamp = Date.now()
 }
 
-function writeClipboardDb(db: ClipboardDb): void {
+function writeDb(db: ClipboardDb): void {
   writeFileSync(clipboardPath(), `${JSON.stringify(db, null, 2)}\n`, 'utf8')
+  _readClipboardDb = db
+  _cacheTimestamp = Date.now()
 }
 
 function detectSensitiveValue(text: string): boolean {
@@ -103,7 +114,8 @@ function sanitizeEntry(entry: ClipboardEntry): ClipboardEntry | null {
         ...base,
         kind: 'file',
         paths,
-        preview: String((entry as ClipboardFileEntry).preview ?? basename(paths[0])),
+        preview:
+          paths.length === 1 ? basename(paths[0]) : `${basename(paths[0])} + ${paths.length - 1} more`,
       }
     }
     default:
@@ -125,8 +137,6 @@ function previewFromText(text: string): string {
 }
 
 function insertEntry(db: ClipboardDb, entry: ClipboardEntry): ClipboardDb {
-  // Dedup: if an identical entry already exists, move it to the top with a
-  // fresh timestamp instead of growing the history with a duplicate.
   const pinned = db.items.filter((item) => item.pinned && item.id !== entry.id)
   const rest = db.items.filter((item) => !item.pinned && item.id !== entry.id)
   return { items: [...pinned, entry, ...rest].slice(0, CLIPBOARD_LIMIT) }
@@ -136,9 +146,6 @@ function hashKey(kind: string, payload: string): string {
   return createHash('sha1').update(`${kind}|${payload}`).digest('hex').slice(0, 16)
 }
 
-/** Read macOS file URLs out of the clipboard. Finder and many apps put
- *  `public.file-url` on the pasteboard, one URL per format read. Returns
- *  [] on platforms/formats we can't resolve. */
 function readFileUrls(): string[] {
   if (process.platform !== 'darwin') return []
   const formats = clipboard.availableFormats()
@@ -150,8 +157,6 @@ function readFileUrls(): string[] {
   try {
     const raw = clipboard.read('public.file-url')
     if (!raw) return []
-    // The pasteboard sometimes returns multiple URLs separated by nulls or
-    // newlines. Split defensively and decode.
     const parts = raw
       .split(/\0|\r?\n/g)
       .map((part) => part.trim())
@@ -174,9 +179,6 @@ function readFileUrls(): string[] {
   }
 }
 
-/** Pre-compute a stable id for a given clipboard payload so dedup works
- *  across runs. Using a content hash means the same text copied twice
- *  collapses into one pinned/unpinned entry with a new timestamp. */
 function idForText(text: string): string {
   return `text:${hashKey('text', text).slice(0, 12)}`
 }
@@ -212,13 +214,10 @@ function captureImageEntry(now: number): ClipboardEntry | null {
   const id = idForImage(hash)
   const file = join(imagesDir(), `${hash}.png`)
 
-  // Dedup on disk too — if we already saved this exact image before, reuse
-  // the file instead of rewriting identical bytes.
   if (!existsSync(file)) {
     writeFileSync(file, buffer)
   }
 
-  const size = image.getSize()
   return {
     id,
     kind: 'image',
@@ -226,8 +225,8 @@ function captureImageEntry(now: number): ClipboardEntry | null {
     pinned: false,
     isSecret: false,
     imagePath: file,
-    width: size.width,
-    height: size.height,
+    width: image.getSize().width,
+    height: image.getSize().height,
     byteSize: buffer.length,
   }
 }
@@ -236,7 +235,6 @@ function captureTextEntry(now: number): ClipboardEntry | null {
   const text = clipboard.readText()
   if (!text || !text.trim()) return null
 
-  const preview = previewFromText(text)
   return {
     id: idForText(text),
     kind: 'text',
@@ -244,26 +242,27 @@ function captureTextEntry(now: number): ClipboardEntry | null {
     pinned: false,
     isSecret: detectSensitiveValue(text),
     text,
-    preview,
+    preview: previewFromText(text),
     charCount: text.length,
     lineCount: text.split('\n').length,
   }
 }
 
 /** Mutate the clipboard history based on what's currently on the
- *  pasteboard. Precedence: file URLs beat images beat text, because Finder
- *  sets all three formats when you copy a file (and we want the richest
- *  kind to win). */
+ *  pasteboard. Precedence: file URLs beat images beat text, because
+ *  Finder and many apps set all three formats when you copy a file
+ *  (and we want the richest kind to win). */
 export function captureClipboardSnapshot(): void {
   const now = Date.now()
-  let db = normalizeDb(readClipboardDb())
+  ensureDbLoaded()
+  if (!_readClipboardDb) return
 
   const fileUrls = readFileUrls()
   const candidate =
     captureFileEntry(fileUrls, now) ?? captureImageEntry(now) ?? captureTextEntry(now)
   if (!candidate) return
 
-  const existing = db.items.find((item) => item.id === candidate.id)
+  const existing = _readClipboardDb.items.find((item) => item.id === candidate.id)
   const merged: ClipboardEntry = existing
     ? ({
         ...candidate,
@@ -272,18 +271,18 @@ export function captureClipboardSnapshot(): void {
       } as ClipboardEntry)
     : candidate
 
-  if (db.items[0]?.id === candidate.id && !existing?.pinned) {
+  if (_readClipboardDb.items[0]?.id === candidate.id && !existing?.pinned) {
     // The top entry already matches — nothing to do. Avoid rewriting the
     // JSON every poll tick when the user hasn't actually changed anything.
     return
   }
 
-  db = insertEntry(db, merged)
-  writeClipboardDb(db)
+  const db = normalizeDb(insertEntry(_readClipboardDb, merged))
+  writeDb(db)
 }
 
 export function listClipboardEntries(): ClipboardEntry[] {
-  return normalizeDb(readClipboardDb()).items
+  return normalizeDb(_readClipboardDb || { items: [] }).items
 }
 
 export function getClipboardEntry(id: string): ClipboardEntry | null {
@@ -291,12 +290,12 @@ export function getClipboardEntry(id: string): ClipboardEntry | null {
 }
 
 export function deleteClipboardEntry(id: string): boolean {
-  const db = normalizeDb(readClipboardDb())
+  const db = normalizeDb(_readClipboardDb || { items: [] })
   const entry = db.items.find((item) => item.id === id)
   if (!entry) return false
 
   const next = db.items.filter((item) => item.id !== id)
-  writeClipboardDb({ items: next })
+  writeDb({ items: next })
 
   // If this was an image and no other entry points at the same file, clean
   // up the PNG on disk. This keeps the images directory from unbounded
@@ -305,7 +304,7 @@ export function deleteClipboardEntry(id: string): boolean {
     const stillReferenced = next.some(
       (item) => item.kind === 'image' && item.imagePath === entry.imagePath,
     )
-    if (!stillReferenced && existsSync(entry.imagePath)) {
+    if (stillReferenced && existsSync(entry.imagePath)) {
       try {
         rmSync(entry.imagePath, { force: true })
       } catch {
@@ -318,19 +317,19 @@ export function deleteClipboardEntry(id: string): boolean {
 }
 
 export function togglePinClipboardEntry(id: string): boolean {
-  const db = normalizeDb(readClipboardDb())
+  const db = normalizeDb(_readClipboardDb || { items: [] })
   const entry = db.items.find((item) => item.id === id)
   if (!entry) return false
   entry.pinned = !entry.pinned
   // Keep pinned entries above unpinned ones regardless of age.
   const pinned = db.items.filter((item) => item.pinned)
   const rest = db.items.filter((item) => !item.pinned)
-  writeClipboardDb({ items: [...pinned, ...rest] })
+  writeDb({ items: [...pinned, ...rest] })
   return true
 }
 
 export function clearClipboardHistory(): void {
-  const db = normalizeDb(readClipboardDb())
+  const db = normalizeDb(_readClipboardDb || { items: [] })
   for (const item of db.items) {
     if (item.kind === 'image' && existsSync(item.imagePath)) {
       try {
@@ -340,7 +339,7 @@ export function clearClipboardHistory(): void {
       }
     }
   }
-  writeClipboardDb({ items: [] })
+  writeDb({ items: [] })
 }
 
 /** Put a history entry back on the system clipboard. Images round-trip

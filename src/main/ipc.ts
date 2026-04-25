@@ -1,4 +1,4 @@
-import { BrowserWindow, ipcMain, shell } from 'electron'
+import { BrowserWindow, clipboard, ipcMain, shell } from 'electron'
 import { setSuppressBlurHide } from './windowState'
 import { AGENT_IPC, type AgentRunEvent, type Stage } from '../shared/agent'
 import { CHAT_IPC, type ChatSession, type ChatTurn } from '../shared/chat'
@@ -49,6 +49,18 @@ import {
   searchStoreExtensions,
   uninstallExtension,
 } from './extensions/service'
+import {
+  getExtensionPreferences,
+  installRegistryExtension,
+  listInstalledRegistryExtensions,
+  searchExtensionCatalog,
+  uninstallRegistryExtension,
+} from './extension-registry'
+import {
+  clearAllExtensionSessions,
+  invokeExtensionAction,
+  runExtensionCommand,
+} from './extension-runner'
 import {
   executeSearchAction,
   getSearchBenchmarkHistory,
@@ -108,6 +120,11 @@ let answerAbort: AbortController | null = null
 let agentAbort: AbortController | null = null
 let agentRunId: string | null = null
 
+type DragMonitorControls = {
+  startWindowDragMonitoring: (win: BrowserWindow) => void
+  stopWindowDragMonitoring: (win: BrowserWindow) => void
+}
+
 function sendAgentEvent(sender: Electron.WebContents, event: AgentRunEvent): void {
   if (!sender.isDestroyed()) sender.send(AGENT_IPC.EVENT, event)
 }
@@ -161,10 +178,14 @@ function startAgentRun(sender: Electron.WebContents, task: string): string {
 export function shutdownIpcHandlers(): void {
   answerAbort?.abort()
   agentAbort?.abort()
+  clearAllExtensionSessions()
   disposeSharedBridge()
 }
 
-export function registerIpcHandlers(getWindow: () => BrowserWindow | null): void {
+export function registerIpcHandlers(
+  getWindow: () => BrowserWindow | null,
+  controls?: DragMonitorControls,
+): void {
   ipcMain.handle('llm-config-get', async () => ({
     ...LLM_DEFAULTS,
     ...readLLMConfig(),
@@ -178,10 +199,10 @@ export function registerIpcHandlers(getWindow: () => BrowserWindow | null): void
     invalidateProviderCache()
   })
 
-  ipcMain.handle('llm-provider-statuses', async () => {
-    const cfg = readLLMConfig()
-    const ids: ProviderId[] = ['openai', 'openai-compatible', 'anthropic', 'ollama', 'copilot', 'gemini']
-    const entries = await Promise.all(
+    ipcMain.handle('llm-provider-statuses', async () => {
+      const cfg = readLLMConfig()
+      const ids: ProviderId[] = ['openai', 'openai-compatible', 'anthropic', 'ollama', 'copilot', 'gemini', 'opencode']
+      const entries = await Promise.all(
       ids.map(async (id) => {
         try {
           const ok = await buildProviderForId(id, cfg).isAvailable()
@@ -194,17 +215,18 @@ export function registerIpcHandlers(getWindow: () => BrowserWindow | null): void
     return Object.fromEntries(entries) as Record<ProviderId, boolean>
   })
 
-  ipcMain.handle('llm-list-models', async (_event, providerId: unknown) => {
-    const id = providerId as ProviderId
-    if (
-      id !== 'openai' &&
-      id !== 'openai-compatible' &&
-      id !== 'anthropic' &&
-      id !== 'ollama' &&
-      id !== 'copilot' &&
-      id !== 'gemini'
-    )
-      return []
+    ipcMain.handle('llm-list-models', async (_event, providerId: unknown) => {
+      const id = providerId as ProviderId
+      if (
+        id !== 'openai' &&
+        id !== 'openai-compatible' &&
+        id !== 'anthropic' &&
+        id !== 'ollama' &&
+        id !== 'copilot' &&
+        id !== 'gemini' &&
+        id !== 'opencode'
+      )
+        return []
     try {
       return await listModelsForProvider(id)
     } catch {
@@ -556,6 +578,120 @@ export function registerIpcHandlers(getWindow: () => BrowserWindow | null): void
     return getExtensionInstallError(extensionId)
   })
 
+  ipcMain.handle('extension:list', async () => {
+    return listInstalledRegistryExtensions()
+  })
+
+  ipcMain.handle('extension:search-store', async (_event, query: unknown) => {
+    const q = typeof query === 'string' ? query : ''
+    return searchExtensionCatalog(q)
+  })
+
+  ipcMain.handle('extension:install', async (_event, extensionId: unknown) => {
+    if (typeof extensionId !== 'string' || !extensionId.trim()) {
+      throw new Error('A valid extension id is required')
+    }
+    return installRegistryExtension(extensionId)
+  })
+
+  ipcMain.handle('extension:uninstall', async (_event, extensionId: unknown) => {
+    if (typeof extensionId !== 'string' || !extensionId.trim()) {
+      throw new Error('A valid extension id is required')
+    }
+    return uninstallRegistryExtension(extensionId)
+  })
+
+  ipcMain.handle('extension:run-command', async (_event, payload: unknown) => {
+    if (!payload || typeof payload !== 'object') {
+      throw new Error('Invalid extension run payload')
+    }
+
+    const body = payload as {
+      extensionId?: unknown
+      commandName?: unknown
+      argumentValues?: unknown
+    }
+
+    if (typeof body.extensionId !== 'string' || typeof body.commandName !== 'string') {
+      throw new Error('extensionId and commandName are required')
+    }
+
+    const argumentValues =
+      body.argumentValues && typeof body.argumentValues === 'object'
+        ? Object.fromEntries(
+            Object.entries(body.argumentValues as Record<string, unknown>).map(([key, value]) => [
+              key,
+              typeof value === 'string' ? value : String(value ?? ''),
+            ]),
+          )
+        : undefined
+
+    return runExtensionCommand({
+      extensionId: body.extensionId,
+      commandName: body.commandName,
+      argumentValues,
+    })
+  })
+
+  ipcMain.handle('extension:invoke-action', async (_event, payload: unknown) => {
+    if (!payload || typeof payload !== 'object') {
+      throw new Error('Invalid extension action payload')
+    }
+
+    const body = payload as {
+      sessionId?: unknown
+      actionId?: unknown
+      formValues?: unknown
+    }
+
+    if (typeof body.sessionId !== 'string' || typeof body.actionId !== 'string') {
+      throw new Error('sessionId and actionId are required')
+    }
+
+    const formValues =
+      body.formValues && typeof body.formValues === 'object'
+        ? Object.fromEntries(
+            Object.entries(body.formValues as Record<string, unknown>).map(([key, value]) => [
+              key,
+              typeof value === 'string' ? value : String(value ?? ''),
+            ]),
+          )
+        : undefined
+
+    return invokeExtensionAction({
+      sessionId: body.sessionId,
+      actionId: body.actionId,
+      formValues,
+    })
+  })
+
+  ipcMain.handle('clipboard:read', async () => {
+    return clipboard.readText()
+  })
+
+  ipcMain.handle('clipboard:write', async (_event, raw: unknown) => {
+    const text = typeof raw === 'string' ? raw : String(raw ?? '')
+    clipboard.writeText(text)
+    return { ok: true }
+  })
+
+  ipcMain.handle('shell:open', async (_event, raw: unknown) => {
+    const target = typeof raw === 'string' ? raw.trim() : ''
+    if (!target) return { ok: false }
+
+    await shell.openExternal(target)
+    return { ok: true }
+  })
+
+  ipcMain.handle('preferences:get', async (_event, payload: unknown) => {
+    if (!payload || typeof payload !== 'object') return {}
+    const body = payload as { extensionId?: unknown; commandName?: unknown }
+    if (typeof body.extensionId !== 'string' || !body.extensionId.trim()) return {}
+
+    const commandName = typeof body.commandName === 'string' ? body.commandName : undefined
+    return getExtensionPreferences(body.extensionId, commandName)
+  })
+
   ipcMain.handle(IPC_CHANNELS.SEARCH_ALL, async (_event, query: unknown) => {
     const q = typeof query === 'string' ? query : ''
     return searchEverything(q)
@@ -680,5 +816,18 @@ export function registerIpcHandlers(getWindow: () => BrowserWindow | null): void
   ipcMain.handle('window:hide', async () => {
     const win = getWindow()
     if (win) win.hide()
+  })
+
+  ipcMain.handle('window:snap-drag-start', async () => {
+    const win = getWindow()
+    if (!win || win.isDestroyed()) return
+    controls?.startWindowDragMonitoring(win)
+  })
+
+  ipcMain.handle('window:snap-drag-end', async () => {
+    console.log('[DEBUG:SnapGuides] IPC: window:snap-drag-end received')
+    const win = getWindow()
+    if (!win || win.isDestroyed()) return
+    controls?.stopWindowDragMonitoring(win)
   })
 }

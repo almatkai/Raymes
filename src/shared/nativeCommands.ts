@@ -68,6 +68,7 @@ export type NativeCommandId =
   | 'open-clipboard-history'
   | 'open-snippets'
   | 'open-quick-notes'
+  | 'open-emoji-picker'
 
 export type NativeCommandDescriptor = {
   id: NativeCommandId

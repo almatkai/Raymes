@@ -1,18 +1,3 @@
-/**
- * Chat session store — sqlite-backed persistence for AI-mode conversations.
- *
- * Schema:
- *   chat_sessions(id TEXT PRIMARY KEY, title TEXT, created_at INTEGER,
- *                 updated_at INTEGER)
- *   chat_turns(id TEXT PRIMARY KEY, session_id TEXT,
- *              role TEXT, text TEXT, stages_json TEXT, error TEXT,
- *              created_at INTEGER,
- *              FOREIGN KEY(session_id) REFERENCES chat_sessions(id))
- *
- * Keeps the file tiny and dependency-light. Opens lazily on first use so
- * tests that never touch chat don't pay the migration cost.
- */
-
 import { app } from 'electron'
 import Database from 'better-sqlite3'
 import { mkdirSync } from 'node:fs'
@@ -26,22 +11,7 @@ import type {
   ChatTurn,
 } from '../../shared/chat'
 
-type SessionRow = {
-  id: string
-  title: string
-  created_at: number
-  updated_at: number
-}
-
-type TurnRow = {
-  id: string
-  session_id: string
-  role: string
-  text: string
-  stages_json: string | null
-  error: string | null
-  created_at: number
-}
+import type { SessionRow, TurnRow } from './sessionStore'
 
 function dbPath(): string {
   const dir = join(app.getPath('userData'), 'chat')
@@ -49,26 +19,33 @@ function dbPath(): string {
   return join(dir, 'sessions.sqlite3')
 }
 
-function safeParseStages(value: string | null): Stage[] | undefined {
-  if (!value) return undefined
-  try {
-    const parsed = JSON.parse(value) as unknown
-    if (!Array.isArray(parsed)) return undefined
-    return parsed as Stage[]
-  } catch {
-    return undefined
-  }
-}
-
 class ChatSessionDatabase {
-  private readonly db: InstanceType<typeof Database>
+  private _db: InstanceType<typeof Database> | null = null
+  private _initPromise: Promise<void> | null = null
 
-  constructor() {
-    this.db = new Database(dbPath())
-    this.db.pragma('journal_mode = WAL')
-    this.db.pragma('synchronous = NORMAL')
-    this.db.pragma('foreign_keys = ON')
-    this.bootstrap()
+  private get db(): InstanceType<typeof Database> {
+    if (!this._db) {
+      throw new Error('Database not initialized - call ensureInitialized() first')
+    }
+    return this._db
+  }
+
+  async ensureInitialized(): Promise<void> {
+    if (this._initPromise) return this._initPromise
+
+    this._initPromise = new Promise((resolve) => {
+      // Defer database initialization to avoid blocking app startup
+      setImmediate(() => {
+        this._db = new Database(dbPath())
+        this._db.pragma('journal_mode = WAL')
+        this._db.pragma('synchronous = NORMAL')
+        this._db.pragma('foreign_keys = ON')
+        this.bootstrap()
+        resolve()
+      })
+    })
+
+    return this._initPromise
   }
 
   private bootstrap(): void {
@@ -143,7 +120,7 @@ class ChatSessionDatabase {
         text: t.text,
         stages: safeParseStages(t.stages_json),
         error: t.error ?? undefined,
-        createdAt: t.created_at,
+        createdAt: t.createdAt,
       })),
     }
   }
@@ -209,32 +186,39 @@ function store(): ChatSessionDatabase {
   return instance
 }
 
-export function listChatSessions(limit?: number): ChatSessionSummary[] {
+export async function listChatSessions(limit?: number): Promise<ChatSessionSummary[]> {
+  await store().ensureInitialized()
   return store().listSessions(limit)
 }
 
-export function getChatSession(id: string): ChatSession | null {
+export async function getChatSession(id: string): Promise<ChatSession | null> {
+  await store().ensureInitialized()
   return store().getSession(id)
 }
 
-export function upsertChatSession(
+export async function upsertChatSession(
   session: Pick<ChatSession, 'id' | 'title' | 'createdAt' | 'updatedAt'>,
-): void {
+): Promise<void> {
+  await store().ensureInitialized()
   store().upsertSession(session)
 }
 
-export function appendChatTurn(sessionId: string, turn: ChatTurn): void {
+export async function appendChatTurn(sessionId: string, turn: ChatTurn): Promise<void> {
+  await store().ensureInitialized()
   store().appendTurn(sessionId, turn)
 }
 
-export function updateChatSessionTitle(sessionId: string, title: string): void {
+export async function updateChatSessionTitle(sessionId: string, title: string): Promise<void> {
+  await store().ensureInitialized()
   store().updateTitle(sessionId, title)
 }
 
-export function deleteChatSession(id: string): boolean {
+export async function deleteChatSession(id: string): Promise<boolean> {
+  await store().ensureInitialized()
   return store().deleteSession(id)
 }
 
-export function clearAllChatSessions(): void {
+export async function clearAllChatSessions(): Promise<void> {
+  await store().ensureInitialized()
   store().clearAll()
 }

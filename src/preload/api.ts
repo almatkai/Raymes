@@ -7,6 +7,11 @@ import type {
   ExtensionManifest,
   InstalledExtension,
 } from '../shared/extensions'
+import type {
+  ExtensionInvokeActionResult,
+  ExtensionRunCommandResult,
+  InstalledRegistryExtension,
+} from '../shared/extensionRuntime'
 import type { LlmConfigRecord, ProviderId } from '../shared/llmConfig'
 import type { NativeCommandDescriptor } from '../shared/nativeCommands'
 import type { PermissionId, PermissionStatus, PermissionsSnapshot } from '../shared/permissions'
@@ -51,6 +56,27 @@ export type RaymesApi = {
   inspectExtension: (extensionId: string) => Promise<ExtensionIntegrityReport>
   reinstallExtension: (extensionId: string) => Promise<ExtensionIntegrityReport>
   getExtensionInstallError: (extensionId: string) => Promise<string | null>
+  extensionList: () => Promise<InstalledRegistryExtension[]>
+  extensionSearchStore: (query: string) => Promise<ExtensionManifest[]>
+  extensionInstall: (extensionId: string) => Promise<InstalledRegistryExtension>
+  extensionUninstall: (extensionId: string) => Promise<boolean>
+  extensionRunCommand: (payload: {
+    extensionId: string
+    commandName: string
+    argumentValues?: Record<string, string>
+  }) => Promise<ExtensionRunCommandResult>
+  extensionInvokeAction: (payload: {
+    sessionId: string
+    actionId: string
+    formValues?: Record<string, string>
+  }) => Promise<ExtensionInvokeActionResult>
+  clipboardReadText: () => Promise<string>
+  clipboardWriteText: (text: string) => Promise<{ ok: boolean }>
+  shellOpen: (target: string) => Promise<{ ok: boolean }>
+  getExtensionPreferences: (payload: {
+    extensionId: string
+    commandName?: string
+  }) => Promise<Record<string, unknown>>
   searchAll: (query: string) => Promise<SearchResult[]>
   runSearchBenchmark: () => Promise<SearchBenchmarkReport>
   getSearchBenchmarkHistory: () => Promise<SearchBenchmarkReport[]>
@@ -101,6 +127,9 @@ export type RaymesApi = {
   githubDevicePoll: () => Promise<GithubPollResult>
   githubDeviceCancel: () => Promise<void>
   onWindowShown: (listener: (payload: { resetUi: boolean }) => void) => () => void
+  startWindowSnapDrag: () => Promise<void>
+  endWindowSnapDrag: () => Promise<void>
+  onWindowSnapGuides: (listener: (payload: { visible: boolean; active: boolean }) => void) => () => void
   /** Alt+Space held after opening the launcher — same pipeline as the Hold to speak control. */
   onVoiceHotkeyHold: (listener: (payload: { phase: 'press' | 'release' }) => void) => () => void
   getPermissions: () => Promise<PermissionsSnapshot>

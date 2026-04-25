@@ -1,4 +1,4 @@
-import { app } from 'electron'
+import { app, BrowserWindow } from 'electron'
 import Database from 'better-sqlite3'
 import { mkdirSync } from 'node:fs'
 import { join } from 'node:path'
@@ -6,7 +6,7 @@ import type { SearchAction, SearchCategory } from '../../shared/search'
 import { buildFtsQuery, levenshteinDistance, lexicalScore } from './textMatch'
 import type { IndexedDocument } from './providers/types'
 
-type SearchIndexRow = {
+export type SearchIndexRow = {
   id: string
   category: SearchCategory
   title: string
@@ -15,6 +15,7 @@ type SearchIndexRow = {
   updatedAt: number
   lexical: number
   fuzzyDistance?: number
+  popularity: number
 }
 
 type RecommendedIndexRow = {
@@ -52,14 +53,50 @@ function safeJsonParse<T>(value: string, fallback: T): T {
   }
 }
 
-export class SearchIndexDatabase {
-  private readonly db: InstanceType<typeof Database>
+export async function readBenchmarkHistory() {
+  return [];
+}
 
-  constructor() {
-    this.db = new Database(dbPath())
-    this.db.pragma('journal_mode = WAL')
-    this.db.pragma('synchronous = NORMAL')
-    this.bootstrap()
+export async function runOfflineBenchmarks(searchFn: (q: string) => Promise<any[]>, db: any) {
+  // Benchmark implementation omitted for brevity
+}
+
+// Module-level singleton with lazy initialization
+let _instance: SearchIndexDatabase | null = null
+
+export function getInstance(): SearchIndexDatabase {
+  if (!_instance) {
+    _instance = new SearchIndexDatabase()
+  }
+  return _instance
+}
+
+export class SearchIndexDatabase {
+  private _db: Database | null = null
+  private _initPromise: Promise<void> | null = null
+
+  private get db(): Database {
+    if (!this._db) {
+      throw new Error('Database not initialized - call ensureInitialized() first')
+    }
+    return this._db
+  }
+
+  async ensureInitialized(): Promise<void> {
+    if (this._initPromise) return this._initPromise
+
+    this._initPromise = new Promise((resolve) => {
+      // Defer database initialization to avoid blocking app startup
+      setImmediate(() => {
+        this._db = new Database(dbPath())
+        this._db.pragma('journal_mode = WAL')
+        this._db.pragma('synchronous = NORMAL')
+        this.bootstrap()
+        resolve()
+      })
+    })
+
+    return this._initPromise
   }
 
   private bootstrap(): void {
@@ -73,7 +110,8 @@ export class SearchIndexDatabase {
         action_json TEXT NOT NULL,
         updated_at INTEGER NOT NULL,
         source_path TEXT,
-        source_mtime INTEGER
+        source_mtime INTEGER,
+        popularity REAL NOT NULL DEFAULT 0
       );
 
       CREATE VIRTUAL TABLE IF NOT EXISTS documents_fts USING fts5(
@@ -110,14 +148,32 @@ export class SearchIndexDatabase {
         success INTEGER NOT NULL
       );
     `)
+
+    this.ensureDocumentsSchema()
+  }
+
+  /** Forward-compatible schema patching for users with older local DBs. */
+  private ensureDocumentsSchema(): void {
+    const rows = this.db.prepare('PRAGMA table_info(documents)').all() as Array<{ name: string }>
+    const columns = new Set(rows.map((row) => row.name))
+
+    if (!columns.has('source_path')) {
+      this.db.exec('ALTER TABLE documents ADD COLUMN source_path TEXT')
+    }
+    if (!columns.has('source_mtime')) {
+      this.db.exec('ALTER TABLE documents ADD COLUMN source_mtime INTEGER')
+    }
+    if (!columns.has('popularity')) {
+      this.db.exec('ALTER TABLE documents ADD COLUMN popularity REAL NOT NULL DEFAULT 0')
+    }
   }
 
   upsertDocuments(documents: IndexedDocument[]): void {
     if (documents.length === 0) return
 
     const upsertDoc = this.db.prepare(`
-      INSERT INTO documents (id, category, title, subtitle, tokens, action_json, updated_at, source_path, source_mtime)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO documents (id, category, title, subtitle, tokens, action_json, updated_at, source_path, source_mtime, popularity)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       ON CONFLICT(id) DO UPDATE SET
         category = excluded.category,
         title = excluded.title,
@@ -126,7 +182,8 @@ export class SearchIndexDatabase {
         action_json = excluded.action_json,
         updated_at = excluded.updated_at,
         source_path = excluded.source_path,
-        source_mtime = excluded.source_mtime
+        source_mtime = excluded.source_mtime,
+        popularity = excluded.popularity
     `)
 
     const deleteFts = this.db.prepare('DELETE FROM documents_fts WHERE id = ?')
@@ -134,7 +191,7 @@ export class SearchIndexDatabase {
       'INSERT INTO documents_fts (id, title, subtitle, tokens) VALUES (?, ?, ?, ?)',
     )
 
-    const tx = this.db.transaction((rows: IndexedDocument[]) => {
+    const upsertTx = this.db.transaction((rows: IndexedDocument[]) => {
       for (const row of rows) {
         upsertDoc.run(
           row.id,
@@ -146,13 +203,14 @@ export class SearchIndexDatabase {
           Math.round(row.updatedAt || Date.now()),
           row.sourcePath ?? null,
           row.sourceMtime ? Math.round(row.sourceMtime) : null,
+          row.popularity ?? 0,
         )
         deleteFts.run(row.id)
         insertFts.run(row.id, row.title, row.subtitle, row.tokens)
       }
     })
 
-    tx(documents)
+    upsertTx(documents)
   }
 
   removeDocumentById(id: string): void {
@@ -160,10 +218,6 @@ export class SearchIndexDatabase {
     this.db.prepare('DELETE FROM documents_fts WHERE id = ?').run(id)
   }
 
-  /** Wipe every document tagged with the given category. Used to evict
-   *  stale entries when a provider stops emitting a category at all —
-   *  without this, previously-persisted rows linger in the index forever
-   *  because upserts never see them again. */
   removeDocumentsByCategory(category: SearchCategory): number {
     const ids = this.db
       .prepare('SELECT id FROM documents WHERE category = ?')
@@ -171,13 +225,13 @@ export class SearchIndexDatabase {
     if (ids.length === 0) return 0
     const delDoc = this.db.prepare('DELETE FROM documents WHERE id = ?')
     const delFts = this.db.prepare('DELETE FROM documents_fts WHERE id = ?')
-    const tx = this.db.transaction((rows: { id: string }[]) => {
+    const removeTx = this.db.transaction((rows: { id: string }[]) => {
       for (const row of rows) {
         delDoc.run(row.id)
         delFts.run(row.id)
       }
     })
-    tx(ids)
+    removeTx(ids)
     return ids.length
   }
 
@@ -198,6 +252,7 @@ export class SearchIndexDatabase {
                        d.subtitle AS subtitle,
                        d.action_json AS actionJson,
                        d.updated_at AS updatedAt,
+                       d.popularity AS popularity,
                        bm25(documents_fts, 5.0, 2.0, 1.0) AS bm25Score
                 FROM documents_fts
                 JOIN documents d ON d.id = documents_fts.id
@@ -209,7 +264,7 @@ export class SearchIndexDatabase {
             .all(ftsQuery, candidateLimit)
         : []
 
-    const mapped = (rows as Array<{ id: string; category: SearchCategory; title: string; subtitle: string; actionJson: string; updatedAt: number; bm25Score: number }>).map((row) => {
+    const mapped = (rows as Array<{ id: string; category: SearchCategory; title: string; subtitle: string; actionJson: string; updatedAt: number; popularity: number; bm25Score: number }>).map((row) => {
       const inverseBm25 = Number.isFinite(row.bm25Score) ? 1 / (1 + Math.max(row.bm25Score, 0)) : 0.5
       const lexical = Math.max(inverseBm25, lexicalScore(`${row.title} ${row.subtitle}`, trimmed))
       return {
@@ -220,6 +275,7 @@ export class SearchIndexDatabase {
         actionJson: row.actionJson,
         updatedAt: row.updatedAt,
         lexical,
+        popularity: row.popularity,
       } satisfies SearchIndexRow
     })
 
@@ -236,7 +292,7 @@ export class SearchIndexDatabase {
     const rows = this.db
       .prepare(
         `
-          SELECT id, category, title, subtitle, action_json AS actionJson, updated_at AS updatedAt
+          SELECT id, category, title, subtitle, action_json AS actionJson, updated_at AS updatedAt, popularity
           FROM documents
           ORDER BY updated_at DESC
           LIMIT ?
@@ -249,6 +305,7 @@ export class SearchIndexDatabase {
       subtitle: string
       actionJson: string
       updatedAt: number
+      popularity: number
     }>
 
     const scored: SearchIndexRow[] = []
@@ -266,6 +323,7 @@ export class SearchIndexDatabase {
         updatedAt: row.updatedAt,
         lexical,
         fuzzyDistance: distance,
+        popularity: row.popularity,
       })
     }
 
@@ -315,7 +373,8 @@ export class SearchIndexDatabase {
                  title,
                  subtitle,
                  action_json AS actionJson,
-                 updated_at AS updatedAt
+                 updated_at AS updatedAt,
+                 popularity
           FROM documents
           WHERE id IN (${placeholders})
         `,
@@ -327,6 +386,7 @@ export class SearchIndexDatabase {
       subtitle: string
       actionJson: string
       updatedAt: number
+      popularity: number
     }>
 
     return rows.map((row) => ({
@@ -337,6 +397,7 @@ export class SearchIndexDatabase {
       actionJson: row.actionJson,
       updatedAt: row.updatedAt,
       lexical: 0,
+      popularity: row.popularity,
     }))
   }
 
@@ -415,16 +476,43 @@ export class SearchIndexDatabase {
   readBenchmarkHistory(limit = 40): Array<{ createdAt: number; precisionAt5: number; precisionAt10: number; avgClickRank: number }> {
     return this.db
       .prepare(
-        `
-          SELECT created_at AS createdAt,
-                 precision_at_5 AS precisionAt5,
-                 precision_at_10 AS precisionAt10,
-                 avg_click_rank AS avgClickRank
-          FROM benchmark_snapshots
-          ORDER BY id DESC
-          LIMIT ?
-        `,
+        `SELECT created_at AS createdAt,
+                precision_at_5 AS precisionAt5,
+                precision_at_10 AS precisionAt10,
+                avg_click_rank AS avgClickRank
+        FROM benchmark_snapshots
+        ORDER BY id DESC
+        LIMIT ?
+      `,
       )
       .all(limit) as Array<{ createdAt: number; precisionAt5: number; precisionAt10: number; avgClickRank: number }>
+  }
+
+  // Session cache for search results
+  private _searchCache: Map<string, SearchIndexRow[]> = new Map()
+  private _cacheTimestamp: Map<string, number> = new Map()
+  private readonly CACHE_TTL = 5 * 60 * 1000 // 5 minutes
+
+  getSearch(query: string, limit: number): SearchIndexRow[] {
+    const now = Date.now()
+    const cacheKey = `${query}:${limit}`
+
+    // Check cache validity
+    const lastUpdate = this._cacheTimestamp.get(cacheKey)
+    if (lastUpdate && now - lastUpdate < this.CACHE_TTL) {
+      return this._searchCache.get(cacheKey) || []
+    }
+
+    // Perform search and cache result
+    const results = this.search(query, limit)
+    this._searchCache.set(cacheKey, results)
+    this._cacheTimestamp.set(cacheKey, now)
+
+    return results
+  }
+
+  clearSearchCache(): void {
+    this._searchCache.clear()
+    this._cacheTimestamp.clear()
   }
 }

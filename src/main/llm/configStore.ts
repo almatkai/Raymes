@@ -5,23 +5,50 @@ import { dirname, join } from 'node:path'
 export const OPENRAY_CONFIG_DIR = join(homedir(), '.openray')
 export const OPENRAY_CONFIG_PATH = join(OPENRAY_CONFIG_DIR, 'config.json')
 
+let configCache: Record<string, unknown> | null = null
+
 export function readRawConfig(): Record<string, unknown> {
+  if (configCache) return configCache
+
   if (!existsSync(OPENRAY_CONFIG_PATH)) {
-    return {}
+    configCache = {}
+    return configCache
   }
   try {
     const raw = readFileSync(OPENRAY_CONFIG_PATH, 'utf-8')
-    return JSON.parse(raw) as Record<string, unknown>
+    configCache = JSON.parse(raw) as Record<string, unknown>
+    return configCache
   } catch {
-    return {}
+    configCache = {}
+    return configCache
+  }
+}
+
+let writeTimeout: ReturnType<typeof setTimeout> | null = null
+
+export function flushConfig(): void {
+  if (!configCache || !writeTimeout) return
+  try {
+    mkdirSync(dirname(OPENRAY_CONFIG_PATH), { recursive: true })
+    writeFileSync(OPENRAY_CONFIG_PATH, `${JSON.stringify(configCache, null, 2)}\n`, 'utf-8')
+    if (writeTimeout) {
+      clearTimeout(writeTimeout)
+      writeTimeout = null
+    }
+  } catch (err) {
+    console.error('Failed to write config:', err)
   }
 }
 
 export function writeConfigPatch(patch: Record<string, unknown>): void {
-  mkdirSync(dirname(OPENRAY_CONFIG_PATH), { recursive: true })
-  const prev = readRawConfig()
-  const next = { ...prev, ...patch }
-  writeFileSync(OPENRAY_CONFIG_PATH, `${JSON.stringify(next, null, 2)}\n`, 'utf-8')
+  const current = readRawConfig()
+  configCache = { ...current, ...patch }
+
+  if (writeTimeout) clearTimeout(writeTimeout)
+  writeTimeout = setTimeout(() => {
+    flushConfig()
+    writeTimeout = null
+  }, 1000) // Batch writes every 1s
 }
 
 /** How long (ms) after hiding the palette we keep UI state (e.g. Providers) when reopening. Default 60s. */
@@ -34,11 +61,6 @@ export function getUiStateRetentionMs(): number {
   return 60_000
 }
 
-/** When true, safety-gated destructive actions are previewed instead of
- *  executed. The renderer still sees a real confirmation dialog, and the
- *  action is recorded in the safety log as a dry run so the UI can show
- *  what *would* have happened. Off by default; flip it via the settings
- *  panel while diagnosing something risky. */
 export function getSafetyDryRun(): boolean {
   const raw = readRawConfig()
   return raw.safetyDryRun === true
@@ -46,4 +68,17 @@ export function getSafetyDryRun(): boolean {
 
 export function setSafetyDryRun(value: boolean): void {
   writeConfigPatch({ safetyDryRun: value })
+}
+
+export function getPersistedWindowPosition(): { x: number; y: number } | null {
+  const raw = readRawConfig()
+  const pos = raw.windowPosition as { x: number; y: number } | undefined
+  if (pos && typeof pos.x === 'number' && typeof pos.y === 'number') {
+    return pos
+  }
+  return null
+}
+
+export function setPersistedWindowPosition(pos: { x: number; y: number }): void {
+  writeConfigPatch({ windowPosition: pos })
 }

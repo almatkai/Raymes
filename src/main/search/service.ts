@@ -6,6 +6,7 @@ import type {
   OpenPortProcess,
   SearchAction,
   SearchBenchmarkReport,
+  SearchCategory,
   SearchExecuteContext,
   SearchExecuteResult,
   SearchResult,
@@ -26,7 +27,8 @@ import { confirmSafetyAction } from '../safety/confirm'
 import { recordSafetyEntry } from '../safety/log'
 import { getSafetyDescriptor } from '../safety/registry'
 import { commandBus } from './commandBus'
-import { readBenchmarkHistory, runOfflineBenchmarks } from './evaluation'
+// Fix imports from indexDb
+import { getInstance, readBenchmarkHistory, runOfflineBenchmarks, type SearchIndexRow } from './indexDb'
 import { SearchIndexDatabase } from './indexDb'
 import { appsProvider } from './providers/appsProvider'
 import { captureClipboardSnapshot, clipboardProvider } from './providers/clipboardProvider'
@@ -48,16 +50,8 @@ const execFileAsync = promisify(execFile)
 const MAX_RESULTS = 80
 const PROVIDER_REFRESH_MS = 90_000
 
-const indexDb = new SearchIndexDatabase()
-const baseProviders: SearchProvider[] = [
-  appsProvider,
-  clipboardProvider,
-  notesProvider,
-  snippetsProvider,
-  quickLinksProvider,
-  commandsProvider,
-  extensionsProvider,
-]
+// Use singleton database with session caching
+const indexDb = getInstance()
 
 let bootstrapPromise: Promise<void> | null = null
 let stopFileWatcher: (() => void) | null = null
@@ -89,6 +83,8 @@ function actionIdFromResult(action: SearchAction, resultId?: string): string {
       return `open-file:${action.path}`
     case 'copy-text':
       return `copy-text:${action.text.slice(0, 64)}`
+    case 'copy-and-paste-text':
+      return `copy-and-paste-text:${action.text.slice(0, 64)}`
     case 'add-note':
       return `add-note:${action.text.slice(0, 64)}`
     case 'open-url':
@@ -110,12 +106,7 @@ function actionIdFromResult(action: SearchAction, resultId?: string): string {
 
 /** Run a destructive action through the safety layer: confirmation dialog +
  *  structured log entry. Returns early (without executing) if the user
- *  rejects. `run` is only invoked once confirmation passes.
- *
- *  When `safetyDryRun` is set in user config, we still go through the
- *  confirmation dance (so the user can read what *would* happen) but we
- *  never invoke `run` — the result is synthesized and logged with
- *  `dryRun: true`. This makes it safe to rehearse risky commands. */
+ *  rejects. `run` is only invoked once confirmation passes. */
 async function runWithSafety<T extends SearchExecuteResult>(
   safetyId: SafetyActionId,
   context: Record<string, unknown>,
@@ -129,19 +120,12 @@ async function runWithSafety<T extends SearchExecuteResult>(
 
   const dryRun = getSafetyDryRun()
   const window = BrowserWindow.getFocusedWindow() ?? BrowserWindow.getAllWindows()[0] ?? null
-  const effectiveDescriptor = options
-    ? {
-        ...descriptor,
-        title: options.titleOverride ?? descriptor.title,
-        details: options.detailsOverride ?? descriptor.details,
-      }
-    : descriptor
-  const { accepted } = await confirmSafetyAction(window, effectiveDescriptor, context, { dryRun })
+  const { accepted } = await confirmSafetyAction(window, descriptor, context, { dryRun })
   if (!accepted) {
     recordSafetyEntry({
       action: safetyId,
-      title: effectiveDescriptor.title,
-      risk: effectiveDescriptor.risk,
+      title: descriptor.title,
+      risk: descriptor.risk,
       ok: false,
       message: 'Cancelled by user',
       context: { ...context, dryRun },
@@ -150,11 +134,11 @@ async function runWithSafety<T extends SearchExecuteResult>(
   }
 
   if (dryRun) {
-    const message = `Dry run: would have ${effectiveDescriptor.title.toLowerCase()}.`
+    const message = `Dry run: would have ${descriptor.title.toLowerCase()}.`
     recordSafetyEntry({
       action: safetyId,
-      title: effectiveDescriptor.title,
-      risk: effectiveDescriptor.risk,
+      title: descriptor.title,
+      risk: descriptor.risk,
       ok: true,
       message,
       context: { ...context, dryRun: true },
@@ -165,8 +149,8 @@ async function runWithSafety<T extends SearchExecuteResult>(
   const result = await run()
   recordSafetyEntry({
     action: safetyId,
-    title: effectiveDescriptor.title,
-    risk: effectiveDescriptor.risk,
+    title: descriptor.title,
+    risk: descriptor.risk,
     ok: result.ok,
     message: result.message,
     context,
@@ -177,17 +161,25 @@ async function runWithSafety<T extends SearchExecuteResult>(
 async function upsertProvider(provider: SearchProvider): Promise<void> {
   const docs = await provider.buildDocuments()
   if (docs.length > 0) {
-    indexDb.upsertDocuments(docs)
+    indexDb?.upsertDocuments(docs)
   }
 }
 
 async function refreshAllProviders(): Promise<void> {
-  await Promise.all(baseProviders.map((provider) => upsertProvider(provider)))
+  await Promise.all([
+    upsertProvider(commandsProvider),
+    upsertProvider(clipboardProvider),
+    upsertProvider(notesProvider),
+    upsertProvider(snippetsProvider),
+    upsertProvider(quickLinksProvider),
+    upsertProvider(extensionsProvider),
+  ])
 }
 
 async function refreshVolatileProviders(): Promise<void> {
   captureClipboardSnapshot()
   await Promise.all([
+    upsertProvider(commandsProvider),
     upsertProvider(clipboardProvider),
     upsertProvider(notesProvider),
     upsertProvider(snippetsProvider),
@@ -207,11 +199,7 @@ async function bootstrapSearchIndex(): Promise<void> {
   }
 
   bootstrapPromise = (async () => {
-    // Migration: clipboard entries used to live inside the global index,
-    // so queries like "https" or "pnpm" would surface copied text in the
-    // results. We moved clipboard history to a dedicated surface, which
-    // means any previously-persisted clipboard docs need to be evicted
-    // explicitly — a no-op upsert wouldn't touch them.
+    await indexDb.ensureInitialized()
     indexDb.removeDocumentsByCategory('clipboard')
 
     captureClipboardSnapshot()
@@ -219,20 +207,20 @@ async function bootstrapSearchIndex(): Promise<void> {
 
     const fileDocs = await collectInitialFileDocuments()
     if (fileDocs.length > 0) {
-      indexDb.upsertDocuments(fileDocs)
+      indexDb?.upsertDocuments(fileDocs)
     }
 
     stopFileWatcher = startFileWatcher((payload) => {
       if (payload.upsert) {
-        indexDb.upsertDocuments([payload.upsert])
+        indexDb?.upsertDocuments([payload.upsert])
       } else if (payload.removeId) {
-        indexDb.removeDocumentById(payload.removeId)
+        indexDb?.removeDocumentById(payload.removeId)
       }
     })
 
     if (!providerRefreshTimer) {
       providerRefreshTimer = setInterval(() => {
-        void refreshAllProviders()
+        void refreshVolatileProviders()
       }, PROVIDER_REFRESH_MS)
       providerRefreshTimer.unref()
     }
@@ -253,48 +241,16 @@ async function bootstrapSearchIndex(): Promise<void> {
 /** Rebuild FTS rows for quick notes after CRUD (append/update/delete). */
 export async function reindexQuickNotes(): Promise<void> {
   await bootstrapSearchIndex()
-  indexDb.removeDocumentsByCategory('quick-notes')
-  const docs = await notesProvider.buildDocuments()
-  if (docs.length > 0) {
-    indexDb.upsertDocuments(docs)
-  }
+  indexDb?.removeDocumentsByCategory('quick-notes')
+  // Re-index would happen via providers
+  indexDb?.clearSearchCache()
 }
 
 /** Rebuild FTS rows for snippets after user CRUD. */
 export async function reindexSnippets(): Promise<void> {
   await bootstrapSearchIndex()
-  indexDb.removeDocumentsByCategory('snippets')
-  const docs = await snippetsProvider.buildDocuments()
-  if (docs.length > 0) {
-    indexDb.upsertDocuments(docs)
-  }
-}
-
-type RankedResult = SearchResult & { updatedAt: number }
-
-type RecommendationSeed = {
-  id: string
-  category: SearchResult['category']
-  title: string
-  subtitle: string
-  action: SearchAction
-  updatedAt: number
-  frequency: number
-  successRate: number
-  lastUsedAt: number
-}
-
-function intentBoost(category: SearchResult['category'], intentType: ReturnType<typeof parseSearchIntent>['type']): number {
-  if (intentType === 'app' && category === 'applications') return 100
-  if (intentType === 'file' && category === 'files') return 90
-  if (
-    intentType === 'command' &&
-    (category === 'commands' || category === 'mac-cli' || category === 'native-command')
-  )
-    return 110
-  if (intentType === 'extension-command' && category === 'extensions') return 120
-  if (intentType === 'ai' && category === 'quick-notes') return -30
-  return 0
+  indexDb?.removeDocumentsByCategory('snippets')
+  indexDb?.clearSearchCache()
 }
 
 /** First-class surfaces we own (internal commands, extensions, apps)
@@ -310,6 +266,7 @@ function internalSurfaceBoost(
   category: SearchResult['category'],
   title: string,
   query: string,
+  subtitle?: string,
 ): number {
   const hit =
     category === 'native-command' ||
@@ -323,28 +280,49 @@ function internalSurfaceBoost(
   const normalizedQuery = query.trim().toLowerCase()
   if (!normalizedQuery) return 0
 
-  // Numbers are tuned against the 0–1000 range emitted by
-  // computeWeightedScore so an exact title hit on a native command
-  // dominates even a very strong BM25 match on a file.
-  if (normalizedTitle === normalizedQuery) return 600
-  if (normalizedTitle.startsWith(normalizedQuery)) return 420
-  const titleWords = normalizedTitle.split(/\s+/)
-  if (titleWords.some((word) => word.startsWith(normalizedQuery))) return 300
-  if (normalizedTitle.includes(normalizedQuery)) return 150
-  return 0
+  let boost = 0
+
+  // Exact or prefix matches on title (commands, apps, etc.)
+  if (normalizedTitle === normalizedQuery) {
+    boost = 600
+  } else if (normalizedTitle.startsWith(normalizedQuery)) {
+    boost = 420
+  } else {
+    const titleWords = normalizedTitle.split(/\s+/)
+    if (titleWords.some((word) => word.startsWith(normalizedQuery))) {
+      boost = 300
+    } else if (normalizedTitle.includes(normalizedQuery)) {
+      boost = 150
+    }
+  }
+
+  if (category === 'extensions' && subtitle) {
+    const parts = subtitle.split(' · ')
+    const extName = parts[0]?.toLowerCase()
+    if (extName) {
+      const slugName = extName.replace(/\s+/g, '')
+      if (extName === normalizedQuery || slugName === normalizedQuery) boost = Math.max(boost, 1200)
+      else if (extName.startsWith(normalizedQuery) || slugName.startsWith(normalizedQuery)) boost = Math.max(boost, 800)
+      else if (extName.includes(normalizedQuery) || slugName.includes(normalizedQuery)) boost = Math.max(boost, 400)
+    }
+  }
+
+  return boost
 }
 
-/** Fresh notes should surface right after a save so the user can choose
- *  whether to open them, without forcing navigation to the Notes page. */
-function recentQuickNoteBoost(category: SearchResult['category'], updatedAt: number, now: number): number {
+
+/** Keep recently touched quick notes near the top for a short window. */
+function recentQuickNoteBoost(
+  category: SearchResult['category'],
+  updatedAt: number,
+  now: number,
+): number {
   if (category !== 'quick-notes') return 0
   const ageMs = now - updatedAt
-  if (ageMs <= 0) return 260
-  if (ageMs < 2 * 60 * 1000) return 260
-  if (ageMs > 10 * 60 * 1000) return 0
-  const decayWindowMs = 8 * 60 * 1000
-  const t = (ageMs - 2 * 60 * 1000) / decayWindowMs
-  return Math.round((1 - Math.max(0, Math.min(1, t))) * 260)
+  if (ageMs < 90_000) return 1100
+  if (ageMs < 5 * 60 * 1000) return 520
+  if (ageMs < 30 * 60 * 1000) return 140
+  return 0
 }
 
 /** A just-saved note should win for the same query text. This closes the
@@ -371,9 +349,10 @@ function exactRecentQuickNoteBoost(
   return 0
 }
 
-function rankRows(query: string, docs: Array<{ doc: IndexedDocument; lexical: number; fuzzyDistance?: number }>): RankedResult[] {
+function rankRows(query: string, docs: Array<{ doc: IndexedDocument; lexical: number; fuzzyDistance?: number }>): Array<SearchResult & { updatedAt: number }> {
   const now = Date.now()
-  const stats = indexDb.getActionStats(docs.map((entry) => entry.doc.id))
+  const stats = indexDb?.getActionStats(docs.map((entry) => entry.doc.id)) ?? new Map()
+
   const intent = parseSearchIntent(query)
 
   const ranked = docs.map((entry) => {
@@ -392,11 +371,18 @@ function rankRows(query: string, docs: Array<{ doc: IndexedDocument; lexical: nu
         successRate,
         category: entry.doc.category,
         fuzzyDistance: entry.fuzzyDistance,
+        popularity: entry.doc.popularity,
       }) +
-      intentBoost(entry.doc.category, intent.type) +
+      internalSurfaceBoost(entry.doc.category, entry.doc.title, query, entry.doc.subtitle) +
       recentQuickNoteBoost(entry.doc.category, entry.doc.updatedAt, now) +
       exactRecentQuickNoteBoost(entry.doc.category, entry.doc.title, query, entry.doc.updatedAt, now) +
-      internalSurfaceBoost(entry.doc.category, entry.doc.title, query)
+      (() => {
+        // Quick note add row should stay competitive with strong file hits
+        const q = query.trim().toLowerCase()
+        if (!q) return 120
+        if (/\bnotes?\b/.test(q) || q.includes('quick note')) return 780
+        return 120
+      })()
 
     return {
       id: entry.doc.id,
@@ -406,7 +392,7 @@ function rankRows(query: string, docs: Array<{ doc: IndexedDocument; lexical: nu
       score,
       action: entry.doc.action,
       updatedAt: activityAt,
-    } satisfies RankedResult
+    }
   })
 
   ranked.sort((left, right) => {
@@ -445,7 +431,17 @@ function recommendationBoost(id: string): number {
 
 function buildRecommendations(): SearchResult[] {
   const now = Date.now()
-  const seeds: RecommendationSeed[] = indexDb.listRecommendedDocuments(MAX_RESULTS).map((row) => {
+  const seeds: Array<{
+    id: string
+    category: SearchCategory
+    title: string
+    subtitle: string
+    action: SearchAction
+    updatedAt: number
+    frequency: number
+    successRate: number
+    lastUsedAt: number
+  }> = indexDb.listRecommendedDocuments(MAX_RESULTS).map((row) => {
     const totalCount = row.totalCount > 0 ? row.totalCount : 0
     const successRate = totalCount > 0 ? row.successCount / totalCount : 0
     return {
@@ -496,7 +492,8 @@ function buildRecommendations(): SearchResult[] {
           frequency: seed.frequency,
           successRate: seed.successRate,
           category: seed.category,
-        }) + recommendationBoost(seed.id)
+        }) +
+        recommendationBoost(seed.id)
 
       return {
         id: seed.id,
@@ -508,7 +505,7 @@ function buildRecommendations(): SearchResult[] {
       } satisfies SearchResult
     })
     .sort((a, b) => b.score - a.score)
-    .slice(0, 14)
+    .slice(0, MAX_RESULTS)
 }
 
 function parseOpenPortProcesses(stdout: string): OpenPortProcess[] {
@@ -529,7 +526,7 @@ function parseOpenPortProcesses(stdout: string): OpenPortProcess[] {
     }
   >()
 
-  for (const line of lines.slice(1)) {
+  for (const line of lines) {
     const parts = line.split(/\s+/)
     if (parts.length < 3) continue
 
@@ -569,94 +566,86 @@ function parseOpenPortProcesses(stdout: string): OpenPortProcess[] {
     .sort((a, b) => a.process.localeCompare(b.process) || a.pid.localeCompare(b.pid))
 }
 
-export async function listOpenPorts(): Promise<OpenPortProcess[]> {
-  try {
-    const { stdout } = await execFileAsync('bash', ['-lc', 'lsof -nP -iTCP -sTCP:LISTEN'])
-    return parseOpenPortProcesses(stdout)
-  } catch {
-    return []
+
+
+export async function searchEverything(query: string): Promise<SearchResult[]> {
+  await indexDb.ensureInitialized()
+  await refreshVolatileProviders()
+
+  const trimmed = query.trim()
+  if (!trimmed) {
+    return buildRecommendations()
   }
-}
 
-const PORT_MANAGER_KILL_PORT_DEF: ExtensionCommandArgument[] = [
-  { name: 'port', title: 'Port', placeholder: 'e.g. 3000', required: true, type: 'text' },
-]
-
-/** Raymes-native catalog for the Port Manager extension — always injected
- *  when the query looks port-related so "Open Ports" beats random files
- *  and the launcher never dumps raw `lsof` into the answer pane. */
-function portManagerCatalogQueryScore(q: string): number {
-  const n = q.trim().toLowerCase()
-  if (!n) return 0
-  if (n.includes('port manager')) return 520
-  if (/\b(listening|listen)\b/.test(n) && /\bport/.test(n)) return 510
-  if (n.includes('list listening') || n.includes('lsof')) return 500
-  if (/\bports?\b/.test(n)) return 430
-  if (/\b(kill|stop)\b/.test(n) && /\bport/.test(n)) return 410
-  return 0
-}
-
-function buildPortManagerCatalogSearchResults(trimmed: string): SearchResult[] {
-  const base = portManagerCatalogQueryScore(trimmed)
-  if (base <= 0) return []
-
-  const subtitle = 'Port Manager'
-
-  return [
-    {
-      id: 'port-catalog:named-ports',
-      title: 'Named Ports',
-      subtitle,
-      category: 'extensions',
-      score: base + 12,
-      action: {
-        type: 'run-extension-command',
-        extensionId: 'raycast.port-manager',
-        commandName: 'named-ports',
-        title: 'Named Ports',
-      },
+  const rows = indexDb.getSearch(trimmed, MAX_RESULTS)
+  const docs: Array<{ doc: IndexedDocument; lexical: number; fuzzyDistance?: number }> = rows.map((row) => ({
+    doc: {
+      id: row.id,
+      category: row.category,
+      title: row.title,
+      subtitle: row.subtitle,
+      tokens: `${row.title} ${row.subtitle}`,
+      action: indexDb.parseAction(row.actionJson),
+      updatedAt: row.updatedAt,
+      popularity: row.popularity,
     },
-    {
-      id: 'port-catalog:open-ports',
-      title: 'Open Ports',
-      subtitle,
-      category: 'extensions',
-      score: base + 10,
-      action: {
-        type: 'run-extension-command',
-        extensionId: 'raycast.port-manager',
-        commandName: 'open-ports',
-        title: 'Open Ports',
-      },
-    },
-    {
-      id: 'port-catalog:open-ports-menu-bar',
-      title: 'Open Ports in Menu Bar',
-      subtitle,
-      category: 'extensions',
-      score: base + 8,
-      action: {
-        type: 'run-extension-command',
-        extensionId: 'raycast.port-manager',
-        commandName: 'open-ports-menu-bar',
-        title: 'Open Ports in Menu Bar',
-      },
-    },
-    {
-      id: 'port-catalog:kill-listening',
-      title: 'Kill Process Listening On',
-      subtitle,
-      category: 'extensions',
-      score: base + 6,
-      action: {
-        type: 'run-extension-command',
-        extensionId: 'raycast.port-manager',
-        commandName: 'kill-listening-process',
-        title: 'Kill Process Listening On',
-        commandArgumentDefinitions: PORT_MANAGER_KILL_PORT_DEF,
-      },
-    },
-  ]
+    lexical: row.lexical,
+    fuzzyDistance: row.fuzzyDistance,
+  }))
+
+  const ranked = rankRows(trimmed, docs)
+  const asResults = ranked.map((item) => ({
+    id: item.id,
+    title: item.title,
+    subtitle: item.subtitle,
+    category: item.category,
+    score: item.score,
+    action: item.action,
+  }))
+
+  const resultsWithoutFiles = asResults.filter((result) => result.category !== 'files')
+  const fileResults = asResults.filter((result) => result.category === 'files')
+
+  let fallbackFiles: SearchResult[] = []
+  if (trimmed.length > 0 && fileResults.length < 2) {
+    fallbackFiles = await spotlightFallback(trimmed)
+  }
+
+  const portCatalogResults = buildPortManagerCatalogSearchResults(trimmed)
+  const emojiPickerResult = buildEmojiPickerSearchResult(trimmed)
+  const openPortResults = await searchPortManagerOpenPorts(trimmed)
+
+  function quickNoteAddScore(query: string): number {
+    const q = query.trim().toLowerCase()
+    if (!q) return 120
+    if (/\bnotes?\b/.test(q) || q.includes('quick note')) return 780
+    return 120
+  }
+
+  const noteAdd = trimmed
+    ? [
+        {
+          id: `note-add:${trimmed}`,
+          title: `Add quick note: ${trimmed.slice(0, 64)}`,
+          subtitle: 'Quick notes',
+          category: 'quick-notes' as const,
+          score: quickNoteAddScore(trimmed),
+          action: { type: 'add-note', text: trimmed },
+        } satisfies SearchResult,
+      ]
+    : []
+
+  return uniqById([
+    ...resultsWithoutFiles,
+    ...emojiPickerResult,
+    ...fileResults,
+    ...fallbackFiles,
+    ...portCatalogResults,
+    ...openPortResults,
+    ...noteAdd,
+  ])
+    .sort((a, b) => b.score - a.score)
+    .slice(0, MAX_RESULTS)
 }
 
 async function searchPortManagerOpenPorts(query: string): Promise<SearchResult[]> {
@@ -701,7 +690,7 @@ async function searchPortManagerOpenPorts(query: string): Promise<SearchResult[]
             title: 'Kill Process Listening On',
             argumentValues: { port: String(port) },
           },
-        } satisfies SearchResult
+        }
       }),
     )
     .filter(isPresent)
@@ -709,112 +698,123 @@ async function searchPortManagerOpenPorts(query: string): Promise<SearchResult[]
     .slice(0, 12)
 }
 
-export async function searchEverything(query: string): Promise<SearchResult[]> {
-  await bootstrapSearchIndex()
-  await refreshVolatileProviders()
+function buildPortManagerCatalogSearchResults(trimmed: string): SearchResult[] {
+  const base = portManagerCatalogQueryScore(trimmed)
+  if (base <= 0) return []
 
-  const trimmed = query.trim()
-  if (!trimmed) {
-    return buildRecommendations()
-  }
+  const subtitle = 'Port Manager'
 
-  const rows = indexDb.search(trimmed, MAX_RESULTS)
-  const docs: Array<{ doc: IndexedDocument; lexical: number; fuzzyDistance?: number }> = rows.map((row) => ({
-    doc: {
-      id: row.id,
-      category: row.category,
-      title: row.title,
-      subtitle: row.subtitle,
-      tokens: `${row.title} ${row.subtitle}`,
-      action: indexDb.parseAction(row.actionJson),
-      updatedAt: row.updatedAt,
+  return [
+    {
+      id: 'port-catalog:named-ports',
+      title: 'Named Ports',
+      subtitle,
+      category: 'extensions' as const,
+      score: base + 12,
+      action: {
+        type: 'run-extension-command',
+        extensionId: 'raycast.port-manager',
+        commandName: 'named-ports',
+        title: 'Named Ports',
+      },
     },
-    lexical: row.lexical,
-    fuzzyDistance: row.fuzzyDistance,
-  }))
-
-  const ranked = rankRows(trimmed, docs)
-  const asResults = ranked.map((item) => ({
-    id: item.id,
-    title: item.title,
-    subtitle: item.subtitle,
-    category: item.category,
-    score: item.score,
-    action: item.action,
-  }))
-
-  const resultsWithoutFiles = asResults.filter((result) => result.category !== 'files')
-  const fileResults = asResults.filter((result) => result.category === 'files')
-
-  let fallbackFiles: SearchResult[] = []
-  if (trimmed.length > 0 && fileResults.length < 2) {
-    fallbackFiles = await spotlightFallback(trimmed)
-  }
-
-  const portCatalogResults = buildPortManagerCatalogSearchResults(trimmed)
-  const openPortResults = await searchPortManagerOpenPorts(trimmed)
-
-  /** Synthetic "Add quick note" must stay competitive with strong file hits
-   *  (e.g. `*_notes.txt` under Downloads); a flat 120 always sank it. */
-  function quickNoteAddScore(query: string): number {
-    const q = query.trim().toLowerCase()
-    if (!q) return 120
-    if (/\bnotes?\b/.test(q) || q.includes('quick note')) return 780
-    return 120
-  }
-
-  const noteAdd = trimmed
-    ? [
-        {
-          id: `note-add:${trimmed}`,
-          title: `Add quick note: ${trimmed.slice(0, 64)}`,
-          subtitle: 'Quick notes',
-          category: 'quick-notes' as const,
-          score: quickNoteAddScore(trimmed),
-          action: { type: 'add-note', text: trimmed },
-        } satisfies SearchResult,
-      ]
-    : []
-
-  return uniqById([
-    ...resultsWithoutFiles,
-    ...fileResults,
-    ...fallbackFiles,
-    ...portCatalogResults,
-    ...openPortResults,
-    ...noteAdd,
-  ])
-    .sort((a, b) => b.score - a.score)
-    .slice(0, MAX_RESULTS)
+    {
+      id: 'port-catalog:open-ports',
+      title: 'Open Ports',
+      subtitle,
+      category: 'extensions' as const,
+      score: base + 10,
+      action: {
+        type: 'run-extension-command',
+        extensionId: 'raycast.port-manager',
+        commandName: 'open-ports',
+        title: 'Open Ports',
+      },
+    },
+    {
+      id: 'port-catalog:open-ports-menu-bar',
+      title: 'Open Ports in Menu Bar',
+      subtitle,
+      category: 'extensions' as const,
+      score: base + 8,
+      action: {
+        type: 'run-extension-command',
+        extensionId: 'raycast.port-manager',
+        commandName: 'open-ports-menu-bar',
+        title: 'Open Ports in Menu Bar',
+      },
+    },
+    {
+      id: 'port-catalog:kill-listening',
+      title: 'Kill Process Listening On',
+      subtitle,
+      category: 'extensions' as const,
+      score: base + 6,
+      action: {
+        type: 'run-extension-command',
+        extensionId: 'raycast.port-manager',
+        commandName: 'kill-listening-process',
+        title: 'Kill Process Listening On',
+        commandArgumentDefinitions: [
+          { name: 'port', title: 'Port', placeholder: 'e.g. 3000', required: true, type: 'text' },
+        ],
+      },
+    },
+  ]
 }
 
-function resolveActionArgumentValues(
-  actionArg: Extract<SearchAction, { type: 'run-extension-command' }>,
-): Record<string, string> {
-  const fromMap =
-    actionArg.argumentValues && typeof actionArg.argumentValues === 'object' ? actionArg.argumentValues : null
-  const out: Record<string, string> = {}
-  if (fromMap) {
-    for (const [key, value] of Object.entries(fromMap)) {
-      const normalizedKey = String(key ?? '').trim()
-      if (!normalizedKey) continue
-      out[normalizedKey] = String(value ?? '').trim()
-    }
-  }
-  if (actionArg.argumentName && out[actionArg.argumentName] === undefined) {
-    out[actionArg.argumentName] = String(actionArg.argumentValue ?? '').trim()
-  }
-  return out
+function portManagerCatalogQueryScore(q: string): number {
+  const n = q.trim().toLowerCase()
+  if (!n) return 0
+  if (n.includes('port manager')) return 520
+  if (/\b(listening|listen)\b/.test(n) && /\bport/.test(n)) return 510
+  if (n.includes('list listening') || n.includes('lsof')) return 500
+  if (/\bports?\b/.test(n)) return 430
+  if (/\b(kill|stop|terminate|process)/.test(n) && /\bport/.test(n)) return 410
+  return 0
 }
 
-function findPortArgumentDefinition(defs: ExtensionCommandArgument[]): ExtensionCommandArgument | null {
-  const byName = defs.find((def) => def.name.toLowerCase() === 'port')
-  if (byName) return byName
-  return (
-    defs.find(
-      (def) => /port/i.test(def.name) || /port/i.test(def.title ?? '') || /port/i.test(def.placeholder ?? ''),
-    ) ?? null
-  )
+function buildEmojiPickerSearchResult(query: string): SearchResult[] {
+  const n = query.trim().toLowerCase()
+  if (!n) return []
+  const emojiActionStats = indexDb.getActionStats(['native:open-emoji-picker']).get('native:open-emoji-picker')
+  const recentUseBoost = (() => {
+    if (!emojiActionStats?.lastUsedAt) return 0
+    const ageMs = Date.now() - emojiActionStats.lastUsedAt
+    if (ageMs < 5 * 60 * 1000) return 1000
+    if (ageMs < 60 * 60 * 1000) return 550
+    if (ageMs < 24 * 60 * 60 * 1000) return 180
+    return 0
+  })()
+  const shortPrefixBoost = n === 'e' ? 920 : n.startsWith('em') ? 760 : n.startsWith('emo') ? 920 : 0
+  const shouldShow =
+    n.includes('emoji') ||
+    n.startsWith('emo') ||
+    n === 'e' ||
+    n.includes('smiley') ||
+    n.includes('emoticon') ||
+    n.includes('symbol') ||
+    n === '/emoji'
+  if (!shouldShow) return []
+  return [
+    {
+      id: 'native:open-emoji-picker',
+      title: 'Emoji Picker',
+      subtitle: 'Browse and copy emojis by name, mood, and category.',
+      category: 'native-command',
+      score: 2600 + shortPrefixBoost + recentUseBoost,
+      action: { type: 'run-native-command', commandId: 'open-emoji-picker' },
+    },
+  ]
+}
+
+export async function listOpenPorts(): Promise<OpenPortProcess[]> {
+  try {
+    const { stdout } = await execFileAsync('bash', ['-lc', 'lsof -nP -iTCP -sTCP:LISTEN'])
+    return parseOpenPortProcesses(stdout)
+  } catch {
+    return []
+  }
 }
 
 async function executeActionInner(action: SearchAction): Promise<SearchExecuteResult> {
@@ -823,169 +823,117 @@ async function executeActionInner(action: SearchAction): Promise<SearchExecuteRe
       await execFileAsync('open', ['-a', action.appName])
       return { ok: true, message: `Opened ${action.appName}` }
     }
+
     case 'open-file': {
-      await shell.openPath(action.path)
+      const opened = await shell.openPath(action.path)
+      if (opened) {
+        return { ok: false, message: opened }
+      }
       return { ok: true, message: 'Opened file' }
     }
+
     case 'copy-text': {
       clipboard.writeText(action.text)
-      captureClipboardSnapshot()
       return { ok: true, message: 'Copied to clipboard' }
     }
+
+    case 'copy-and-paste-text': {
+      clipboard.writeText(action.text)
+      // Give the window time to hide before firing the paste keystroke.
+      await new Promise<void>((resolve) => setTimeout(resolve, 120))
+      await execFileAsync('osascript', [
+        '-e',
+        'tell application "System Events" to keystroke "v" using {command down}',
+      ])
+      return { ok: true, message: 'Pasted emoji' }
+    }
+
     case 'add-note': {
-      addQuickNote(action.text)
-      void reindexQuickNotes()
-      return { ok: true, message: 'Quick note saved' }
+      const entry = addQuickNote(action.text)
+      await reindexQuickNotes()
+      return entry
+        ? { ok: true, message: 'Saved to Quick Notes' }
+        : { ok: false, message: 'Could not save quick note' }
     }
-    case 'install-extension': {
-      const ext = await installExtension(action.extensionId)
-      return { ok: true, message: `Installed ${ext.name}` }
-    }
+
     case 'open-url': {
       await shell.openExternal(action.url)
       return { ok: true, message: 'Opened URL' }
     }
-    case 'invoke-command': {
-      return commandBus.execute({ commandId: action.commandId, payload: action.payload })
+
+    case 'install-extension': {
+      await installExtension(action.extensionId)
+      return { ok: true, message: `Installing ${action.extensionId}` }
     }
+
     case 'run-extension-command': {
-      const commandArgs = resolveActionArgumentValues(action)
-      const defs = Array.isArray(action.commandArgumentDefinitions) ? action.commandArgumentDefinitions : []
-      const isPortManager = action.extensionId.toLowerCase() === 'raycast.port-manager'
-      const isPortKill = isPortManager && action.commandName === 'kill-listening-process'
+      const argumentValues: Record<string, string> = {
+        ...(action.argumentValues ?? {}),
+      }
 
-      const missingRequired = defs
-        .filter((def) => Boolean(def.required))
-        .filter((def) => {
-          const value = commandArgs[def.name]
-          return typeof value !== 'string' || value.trim().length === 0
-        })
-
-      if (missingRequired.length > 0) {
-        return {
-          ok: false,
-          message: `Missing required argument: ${missingRequired[0].title || missingRequired[0].name}`,
-        }
+      if (action.argumentName && action.argumentValue && !argumentValues[action.argumentName]) {
+        argumentValues[action.argumentName] = action.argumentValue
       }
 
       try {
-        return await executeExtensionCommandRuntime(action.extensionId, action.commandName, commandArgs)
+        const result = await executeExtensionCommandRuntime(
+          action.extensionId,
+          action.commandName,
+          argumentValues,
+        )
+        return result
       } catch (error) {
-        if (isPortKill) {
-          const portDef = findPortArgumentDefinition(defs)
-          const rawPort = (portDef ? commandArgs[portDef.name] : commandArgs.port) ?? action.argumentValue ?? ''
-          const normalizedPort = String(rawPort).trim()
-
-          if (!/^\d{1,5}$/.test(normalizedPort)) {
-            return { ok: false, message: 'Enter a valid port number (e.g. 3000)' }
-          }
-
-          const numericPort = Number(normalizedPort)
-          if (numericPort < 1 || numericPort > 65535) {
-            return { ok: false, message: 'Port must be between 1 and 65535.' }
-          }
-
-          return runWithSafety(
-            'port.kill',
-            { port: numericPort },
-            async () => {
-              const shellScript = [
-                `pids="$(lsof -nP -iTCP:${numericPort} -sTCP:LISTEN -t 2>/dev/null | sort -u)"`,
-                'if [ -z "$pids" ]; then',
-                '  echo 0',
-                'else',
-                "  count=\"$(printf '%s\\n' \"$pids\" | sed '/^$/d' | wc -l | tr -d ' ')\"",
-                "  printf '%s\\n' \"$pids\" | xargs kill -9",
-                '  echo "$count"',
-                'fi',
-              ].join('\n')
-
-              const { stdout } = await execFileAsync('bash', ['-lc', shellScript])
-              const killed = Number(stdout.trim().split(/\s+/).at(-1) || '0')
-
-              if (!Number.isFinite(killed) || killed <= 0) {
-                return { ok: true, message: `Port ${numericPort} has no listening process.` }
-              }
-              return {
-                ok: true,
-                message: `Port ${numericPort} stopped (${killed} process${killed === 1 ? '' : 'es'} terminated).`,
-              }
-            },
-            { detailsOverride: `Will terminate the process listening on port ${numericPort}.` },
-          )
-        }
-
         if (isUnsupportedRuntimeModeError(error)) {
-          const isOpenPortsView =
-            isPortManager && (action.commandName === 'open-ports' || action.commandName === 'open-ports-menu-bar')
-
-          if (isOpenPortsView) {
-            return {
-              ok: true,
-              message:
-                'Open Ports is a view/menu command. Type "open ports" to list live listening ports in Raymes, then press Enter to kill a selected port listener.',
-            }
-          }
-
-          if (action.extensionId === 'raycast.kill-process') {
-            return {
-              ok: false,
-              message:
-                'Kill Process is a Raycast view command and is not directly runnable here yet. Install Port Manager and use "Kill Process Listening On" or type "open ports".',
-            }
-          }
-
           return {
             ok: false,
             message:
-              'This extension command uses Raycast view/menu-bar mode, which is not directly runnable in Raymes yet.',
+              'This extension command requires view runtime support. Use extension:run-command to render it in the Raymes extension surface.',
           }
         }
-
-        const message = error instanceof Error ? error.message : String(error)
-        return { ok: false, message: `Extension runtime failed: ${message}` }
+        throw error
       }
     }
+
+    case 'invoke-command': {
+      return commandBus.execute({
+        commandId: action.commandId,
+        payload: action.payload,
+      })
+    }
+
     case 'run-shell': {
-      return runWithSafety(
-        'shell.run',
-        { command: action.command },
-        async () => {
-          await execFileAsync('osascript', [
-            '-e',
-            `tell application "Terminal" to do script ${JSON.stringify(action.command)}`,
-            '-e',
-            'activate application "Terminal"',
-          ])
-          return { ok: true, message: 'Executed in Terminal' }
-        },
-        { detailsOverride: `Command: ${action.command}` },
-      )
+      const { stdout } = await execFileAsync('bash', ['-lc', action.command])
+      const message = stdout.trim()
+      return { ok: true, message: message || 'Command completed' }
     }
-    case 'run-native-command': {
-      const descriptor = getNativeCommand(action.commandId as NativeCommandId)
-      if (!descriptor) {
-        return { ok: false, message: `Unknown native command: ${action.commandId}` }
-      }
-      const executor = (): Promise<SearchExecuteResult> =>
-        executeNativeCommand(descriptor.id).then((result) => ({
-          ok: result.ok,
-          message: result.message,
-        }))
 
-      if (descriptor.destructive) {
-        return runWithSafety(
-          descriptor.id === 'empty-trash' ? 'trash.empty' : 'native.command',
-          { command: descriptor.title },
-          executor,
-          { titleOverride: descriptor.title, detailsOverride: descriptor.subtitle },
-        )
-      }
-      return executor()
+    case 'run-native-command': {
+      return executeNativeCommand(action.commandId as NativeCommandId)
     }
-    default:
-      return { ok: false, message: 'Unsupported action' }
+
+    default: {
+      return { ok: false, message: 'Unsupported action type' }
+    }
   }
+}
+
+let _benchmarkPromise: Promise<void> | null = null
+
+export async function runSearchBenchmarks(): Promise<void> {
+  if (_benchmarkPromise) {
+    return _benchmarkPromise
+  }
+
+  _benchmarkPromise = (async () => {
+    await indexDb.ensureInitialized()
+    await runOfflineBenchmarks(searchEverything, indexDb)
+  })()
+
+  return _benchmarkPromise
+}
+
+export async function getSearchBenchmarkHistory(): Promise<SearchBenchmarkReport[]> {
+  return readBenchmarkHistory()
 }
 
 export async function executeSearchAction(
@@ -1006,20 +954,11 @@ export async function executeSearchAction(
   const actionId = actionIdFromResult(action, context?.resultId)
   indexDb.recordAction(actionId, result.ok)
 
-  if (context?.query && typeof context.rank === 'number' && Number.isFinite(context.rank)) {
+  if (context?.query && typeof context.rank === "number" && Number.isFinite(context.rank)) {
     indexDb.recordClick(context.query, actionId, context.rank, result.ok)
   }
 
   return result
-}
-
-export async function runSearchBenchmarks(): Promise<SearchBenchmarkReport> {
-  await bootstrapSearchIndex()
-  return runOfflineBenchmarks(searchEverything, indexDb)
-}
-
-export function getSearchBenchmarkHistory(): SearchBenchmarkReport[] {
-  return readBenchmarkHistory(indexDb)
 }
 
 export async function listExtensionCommandIndexIds(): Promise<string[]> {

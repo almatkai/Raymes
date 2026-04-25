@@ -22,6 +22,7 @@ const ROWS: { id: ProviderId; title: string; subtitle: string }[] = [
   { id: 'anthropic', title: 'Anthropic', subtitle: 'Claude via the official API' },
   { id: 'ollama', title: 'Ollama', subtitle: 'Local models running on this machine' },
   { id: 'copilot', title: 'GitHub Copilot', subtitle: 'PAT, OAuth, or device flow sign-in' },
+  { id: 'opencode', title: 'OpenCode', subtitle: 'opencode.ai via CLI' },
 ]
 
 const DEFAULT_MODEL: Record<ProviderId, string> = {
@@ -31,6 +32,7 @@ const DEFAULT_MODEL: Record<ProviderId, string> = {
   anthropic: 'claude-3-5-haiku-20241022',
   ollama: 'llama3.2',
   copilot: 'gpt-4o',
+  opencode: 'opencode/big-pickle',
 }
 
 type Panel = 'list' | { type: 'detail'; id: ProviderId }
@@ -104,6 +106,9 @@ function ProviderDetail({ id, cfg, connected, onBack, onReload }: DetailProps): 
     if (id === 'copilot') {
       patch.copilotGithubToken = copilotToken
       patch.githubOAuthClientId = oauthClientId
+      patch.model = model.trim() || DEFAULT_MODEL[id]
+    }
+    if (id === 'opencode') {
       patch.model = model.trim() || DEFAULT_MODEL[id]
     }
     await window.raymes.setLlmConfig(patch)
@@ -257,6 +262,23 @@ function ProviderDetail({ id, cfg, connected, onBack, onReload }: DetailProps): 
           </div>
         ) : null}
 
+        {id === 'opencode' ? (
+          <div className="space-y-3">
+            <p className="text-[12px] leading-relaxed text-ink-3">
+              Uses the local <code className="font-mono text-ink-2">opencode</code> CLI to access opencode.ai models.
+              Make sure the CLI is installed and configured.
+            </p>
+            <ModelPicker
+              id={id}
+              model={model}
+              setModel={setModel}
+              modelOptions={modelOptions}
+              modelsLoading={modelsLoading}
+              onRefresh={() => void loadModels()}
+            />
+          </div>
+        ) : null}
+
         {id === 'copilot' ? (
           <div className="space-y-3">
             <p className="text-[12px] leading-relaxed text-ink-3">
@@ -386,6 +408,7 @@ export default function ProvidersView({ onBack }: { onBack: () => void }): JSX.E
     anthropic: false,
     ollama: false,
     copilot: false,
+    opencode: false,
   })
   const rootRef = useRef<HTMLDivElement>(null)
 

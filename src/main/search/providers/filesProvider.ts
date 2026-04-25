@@ -128,12 +128,22 @@ export async function spotlightFallback(query: string, limit = 8): Promise<Searc
   const trimmed = query.trim()
   if (!trimmed) return []
 
+  // Internal paths that should never surface as file results — they belong
+  // to extension packages, caches, or other app-managed directories.
+  const INTERNAL_PATH_PATTERNS = [
+    '/extension-registry/',
+    '/extensions/packages/',
+    '/HTTPStorages/',
+    '/Application Support/raymes/',
+  ]
+
   try {
     const { stdout } = await execFileAsync('mdfind', ['-name', trimmed, '-onlyin', homedir()])
     return stdout
       .split('\n')
       .map((line) => line.trim())
       .filter(Boolean)
+      .filter((path) => !INTERNAL_PATH_PATTERNS.some((pattern) => path.includes(pattern)))
       .slice(0, limit)
       .map((path, index) => ({
         id: `spotlight:${path}`,

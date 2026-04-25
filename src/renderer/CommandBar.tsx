@@ -2,6 +2,7 @@ import { type DragEvent, type FormEvent, useEffect, useMemo, useRef, useState } 
 import type { Intent } from '../shared/intent'
 import type { LlmConfigRecord, ProviderId } from '../shared/llmConfig'
 import type { SearchResult } from '../shared/search'
+import type { ExtensionRunCommandResult } from '../shared/extensionRuntime'
 import { Hint, HintBar, Kbd, Message, SelectField, TextField, cx } from './ui/primitives'
 import { setCommandSurfaceEscapeConsumer } from './escapeGate'
 import { GlideList } from './ui/GlideList'
@@ -22,10 +23,11 @@ const DEFAULT_MODEL: Record<ProviderId, string> = {
   anthropic: 'claude-3-5-haiku-20241022',
   ollama: 'llama3.2',
   copilot: 'gpt-4o',
+  opencode: 'opencode/big-pickle',
 }
 
 /** Built-in palette entries only — extension views (e.g. open ports) use search, not this list. */
-const SYSTEM_SLASH_COMMANDS = ['/providers', '/settings', '/extensions', '/snippets', '/notes'] as const
+const SYSTEM_SLASH_COMMANDS = ['/providers', '/settings', '/extensions', '/snippets', '/notes', '/emoji'] as const
 type SystemSlashCommand = (typeof SYSTEM_SLASH_COMMANDS)[number]
 
 function normalizeSystemSlashCommand(raw: string): SystemSlashCommand | null {
@@ -89,6 +91,8 @@ type PendingExtensionArgument = {
   title?: string
   data?: Array<{ title?: string; value?: string }>
 }
+
+type ExtensionRuntimeViewPayload = Extract<ExtensionRunCommandResult, { ok: true; mode: 'view' }>
 
 function buildRecentExtensionCommandId(extensionId: string, commandName: string): string {
   return `extcmd:${extensionId}:${commandName}`
@@ -291,19 +295,23 @@ export default function CommandBar({
   onOpenProviders,
   onOpenSettings,
   onOpenExtensions,
+  onOpenExtensionRuntime,
   onOpenPortsPage,
   onOpenClipboardPage,
   onOpenSnippetsPage,
   onOpenNotesPage,
+  onOpenEmojiPicker,
 }: {
   onOpenAiChat: (boot: AiChatBoot) => void
   onOpenProviders: () => void
   onOpenSettings: () => void
   onOpenExtensions: () => void
+  onOpenExtensionRuntime: (initial: ExtensionRuntimeViewPayload) => void
   onOpenPortsPage: (opts?: { tab?: 'listen' | 'named' }) => void
   onOpenClipboardPage: () => void
   onOpenSnippetsPage: () => void
   onOpenNotesPage: (opts?: { createdAt?: number }) => void
+  onOpenEmojiPicker: () => void
 }): JSX.Element {
   const [value, setValue] = useState('')
   const [lastIntent, setLastIntent] = useState<Intent | null>(null)
@@ -620,6 +628,12 @@ export default function CommandBar({
       onOpenNotesPage()
       return true
     }
+    if (c === '/emoji') {
+      trackSlashCommand(c)
+      setValue('')
+      onOpenEmojiPicker()
+      return true
+    }
     return false
   }
 
@@ -755,6 +769,38 @@ export default function CommandBar({
     focusCommandInput()
   }
 
+  async function executeExtensionCommandViaRuntime(payload: {
+    extensionId: string
+    commandName: string
+    argumentValues?: Record<string, string>
+  }): Promise<boolean> {
+    try {
+      const result = await window.raymes.extensionRunCommand(payload)
+      if (!result.ok) {
+        showActionMsg(result.message)
+        return false
+      }
+
+      if (result.mode === 'view') {
+        clearPendingAction()
+        setValue('')
+        trackExtensionCommand(payload.extensionId, payload.commandName)
+        onOpenExtensionRuntime(result)
+        return true
+      }
+
+      showActionMsg(result.message)
+      clearPendingAction()
+      setValue('')
+      trackExtensionCommand(payload.extensionId, payload.commandName)
+      focusCommandInput()
+      return true
+    } catch (err) {
+      showActionMsg(err instanceof Error ? err.message : 'Action failed')
+      return false
+    }
+  }
+
   async function submitPendingAction(): Promise<void> {
     if (!pendingAction) return
 
@@ -769,29 +815,11 @@ export default function CommandBar({
       return
     }
 
-    try {
-      const r = await window.raymes.executeSearchAction({
-        type: 'run-extension-command',
-        extensionId: pendingAction.extensionId,
-        commandName: pendingAction.commandName,
-        title: pendingAction.title,
-        commandArgumentDefinitions: pendingAction.commandArgumentDefinitions,
-        argumentValues,
-      }, {
-        query: value.trim(),
-        rank: selectedSearch + 1,
-        resultId: buildRecentExtensionCommandId(pendingAction.extensionId, pendingAction.commandName),
-      })
-      showActionMsg(r.message)
-      if (r.ok) {
-        clearPendingAction()
-        setValue('')
-        trackExtensionCommand(pendingAction.extensionId, pendingAction.commandName)
-        focusCommandInput()
-      }
-    } catch (err) {
-      showActionMsg(err instanceof Error ? err.message : 'Action failed')
-    }
+    await executeExtensionCommandViaRuntime({
+      extensionId: pendingAction.extensionId,
+      commandName: pendingAction.commandName,
+      argumentValues,
+    })
   }
 
   async function runSelectedSearchResult(result: SearchResult, rank = selectedSearch + 1): Promise<void> {
@@ -878,6 +906,17 @@ export default function CommandBar({
       return
     }
 
+    if (
+      result.action.type === 'run-native-command' &&
+      result.action.commandId === 'open-emoji-picker'
+    ) {
+      clearPendingAction()
+      showActionMsg(null)
+      setValue('')
+      onOpenEmojiPicker()
+      return
+    }
+
     if (result.action.type === 'run-extension-command') {
       const defs =
         Array.isArray(result.action.commandArgumentDefinitions) && result.action.commandArgumentDefinitions.length > 0
@@ -913,6 +952,13 @@ export default function CommandBar({
         showActionMsg('Fill arguments · Enter to run · Esc to cancel')
         return
       }
+
+      await executeExtensionCommandViaRuntime({
+        extensionId: result.action.extensionId,
+        commandName: result.action.commandName,
+        argumentValues: result.action.argumentValues,
+      })
+      return
     }
 
     try {
@@ -924,9 +970,6 @@ export default function CommandBar({
       showActionMsg(r.message)
       if (r.ok) setValue('')
       if (r.ok) clearPendingAction()
-      if (r.ok && result.action.type === 'run-extension-command') {
-        trackExtensionCommand(result.action.extensionId, result.action.commandName)
-      }
       if (r.ok && result.category === 'snippets' && result.action.type === 'copy-text') {
         void window.raymes.hide()
       }
@@ -1147,6 +1190,11 @@ export default function CommandBar({
     if (q === '/notes') {
       setValue('')
       onOpenNotesPage()
+      return
+    }
+    if (q === '/emoji') {
+      setValue('')
+      onOpenEmojiPicker()
       return
     }
     if (q === '/open-ports') {

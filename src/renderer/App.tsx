@@ -5,6 +5,7 @@ import AgentChatView from './AgentChatView'
 import ProvidersView from './ProvidersView'
 import SettingsView from './SettingsView'
 import ExtensionsView from './ExtensionsView'
+import ExtensionRuntimeView from './ExtensionRuntimeView'
 import OpenPortsView from './OpenPortsView'
 import PermissionsView from './PermissionsView'
 import ClipboardView from './ClipboardView'
@@ -13,6 +14,8 @@ import { RAYMES_NEW_SNIPPET_EVENT } from '../shared/snippetEvents'
 import type { AiChatBoot } from '../shared/aiChatSurface'
 import { RAYMES_AI_NEW_CHAT_EVENT, RAYMES_QUICK_NOTE_SHORTCUT_EVENT } from '../shared/aiChatSurface'
 import SnippetsView from './SnippetsView'
+import type { ExtensionRunCommandResult } from '../shared/extensionRuntime'
+import EmojiPickerView from './EmojiPickerView'
 
 type Surface =
   | 'command'
@@ -20,22 +23,26 @@ type Surface =
   | 'providers'
   | 'settings'
   | 'extensions'
+  | 'extension-runtime'
   | 'open-ports'
   | 'permissions'
   | 'clipboard'
   | 'snippets'
   | 'notes'
+  | 'emoji-picker'
 
 const PANEL_SELECTORS: Record<Exclude<Surface, 'command'>, string> = {
   'ai-chat': '[aria-label="AI Chat"]',
   providers: '[aria-label="Providers"]',
   settings: '[aria-label="Settings"]',
   extensions: '[aria-label="Extensions"]',
+  'extension-runtime': '[aria-label="Extension Runtime"]',
   'open-ports': '[aria-label="Open Ports"]',
   permissions: '[aria-label="Permissions"]',
   clipboard: '[aria-label="Clipboard History"]',
   snippets: '[aria-label="Snippets"]',
   notes: '[aria-label="Quick Notes"]',
+  'emoji-picker': '[aria-label="Emoji Picker"]',
 }
 
 /** How much vertical padding the outer app container adds. Kept in sync
@@ -44,11 +51,19 @@ const PANEL_SELECTORS: Record<Exclude<Surface, 'command'>, string> = {
 const OUTER_PADDING_PX = 16
 
 export default function App(): JSX.Element {
+  const [snapGuides, setSnapGuides] = useState<{ visible: boolean; active: boolean }>({
+    visible: false,
+    active: false,
+  })
   const [surface, setSurface] = useState<Surface>('command')
   const [openPortsInitialTab, setOpenPortsInitialTab] = useState<'listen' | 'named'>('listen')
   const [notesInitialSelectedId, setNotesInitialSelectedId] = useState<number | null>(null)
   const [aiChatBoot, setAiChatBoot] = useState<AiChatBoot>({ kind: 'panel' })
   const [aiChatKey, setAiChatKey] = useState(0)
+  const [extensionRuntimeInitial, setExtensionRuntimeInitial] = useState<Extract<
+    ExtensionRunCommandResult,
+    { ok: true; mode: 'view' }
+  > | null>(null)
   const contentRef = useRef<HTMLDivElement | null>(null)
   const lastReportedHeightRef = useRef<number>(-1)
   const surfaceRef = useRef<Surface>('command')
@@ -68,7 +83,10 @@ export default function App(): JSX.Element {
 
   useEffect(() => {
     const off = window.raymes.onWindowShown(({ resetUi }) => {
-      if (resetUi) setSurface('command')
+      if (resetUi) {
+        setSurface('command')
+        setExtensionRuntimeInitial(null)
+      }
       focusSurface(resetUi ? 'command' : surface)
     })
     return off
@@ -81,6 +99,59 @@ export default function App(): JSX.Element {
   useEffect(() => {
     surfaceRef.current = surface
   }, [surface])
+
+  useEffect(() => {
+    const off = window.raymes.onWindowSnapGuides((payload) => {
+      console.log('[DEBUG:SnapGuides] Renderer received payload:', payload)
+      setSnapGuides(payload)
+    })
+    return off
+  }, [])
+
+  useEffect(() => {
+    let dragActive = false
+
+    const isNoDragTarget = (target: HTMLElement): boolean => {
+      return Boolean(
+        target.closest(
+          '.no-drag, input, textarea, select, button, a[href], [role="button"], [role="menuitem"], [role="option"], [contenteditable="true"]',
+        ),
+      )
+    }
+
+    const onMouseDown = (event: MouseEvent): void => {
+      if (event.button !== 0) return
+      const target = event.target
+      if (!(target instanceof HTMLElement)) return
+      if (!target.closest('.drag-region')) return
+      if (isNoDragTarget(target)) return
+      dragActive = true
+      void window.raymes.startWindowSnapDrag()
+    }
+
+    const endDrag = (): void => {
+      console.log('[DEBUG:SnapGuides] Renderer: mouseup/endDrag triggered')
+      if (!dragActive) return
+      console.log('[DEBUG:SnapGuides] Renderer: sending endWindowSnapDrag IPC')
+      dragActive = false
+      void window.raymes.endWindowSnapDrag()
+    }
+
+    const onVisibilityChange = (): void => {
+      if (document.visibilityState !== 'visible') endDrag()
+    }
+
+    window.addEventListener('mousedown', onMouseDown, true)
+    window.addEventListener('mouseup', endDrag, true)
+    window.addEventListener('blur', endDrag)
+    document.addEventListener('visibilitychange', onVisibilityChange)
+    return () => {
+      window.removeEventListener('mousedown', onMouseDown, true)
+      window.removeEventListener('mouseup', endDrag, true)
+      window.removeEventListener('blur', endDrag)
+      document.removeEventListener('visibilitychange', onVisibilityChange)
+    }
+  }, [])
 
   // Global ⌘N — route by surface (snippets → new snippet; AI chat → new chat;
   // command bar → quick-note shortcut event for CommandBar).
@@ -166,16 +237,24 @@ export default function App(): JSX.Element {
   }, [surface])
 
   return (
-    <div className="relative flex h-screen w-full overflow-hidden bg-transparent p-2">
-      {/* Dedicated drag handle strip — the full top edge of the window
-          is a draggable region so the user can reposition the launcher
-          without hitting interactive content underneath. The rest of
-          the app stays non-draggable so clicks on rows/buttons behave
-          normally. */}
+    <div className="drag-region relative flex h-screen w-full overflow-hidden bg-transparent p-2">
       <div
         aria-hidden
-        className="drag-region pointer-events-auto absolute left-0 right-0 top-0 z-10 h-2"
-      />
+        className={[
+          'window-snap-guides',
+          snapGuides.visible ? 'is-visible' : '',
+          snapGuides.active ? 'is-active' : '',
+        ]
+          .filter(Boolean)
+          .join(' ')}
+      >
+        <div className="window-snap-guides__zone window-snap-guides__zone--horizontal" />
+        <div className="window-snap-guides__zone window-snap-guides__zone--vertical" />
+        <div className="window-snap-guides__horizontal" />
+        <div className="window-snap-guides__tick window-snap-guides__tick--top" />
+        <div className="window-snap-guides__tick window-snap-guides__tick--bottom" />
+        <div className="window-snap-guides__label">Snap zone</div>
+      </div>
       <div
         ref={contentRef}
         key={surface}
@@ -190,6 +269,13 @@ export default function App(): JSX.Element {
           />
         ) : surface === 'extensions' ? (
           <ExtensionsView onBack={() => setSurface('command')} />
+        ) : surface === 'extension-runtime' && extensionRuntimeInitial ? (
+          <ExtensionRuntimeView
+            initial={extensionRuntimeInitial}
+            onBack={() => {
+              setSurface('command')
+            }}
+          />
         ) : surface === 'open-ports' ? (
           <OpenPortsView
             initialTab={openPortsInitialTab}
@@ -209,6 +295,8 @@ export default function App(): JSX.Element {
             onBack={() => setSurface('command')}
             initialSelectedNoteId={notesInitialSelectedId}
           />
+        ) : surface === 'emoji-picker' ? (
+          <EmojiPickerView onBack={() => setSurface('command')} />
         ) : surface === 'ai-chat' ? (
           <AgentChatView
             key={aiChatKey}
@@ -226,6 +314,10 @@ export default function App(): JSX.Element {
             onOpenProviders={() => setSurface('providers')}
             onOpenSettings={() => setSurface('settings')}
             onOpenExtensions={() => setSurface('extensions')}
+            onOpenExtensionRuntime={(initial) => {
+              setExtensionRuntimeInitial(initial)
+              setSurface('extension-runtime')
+            }}
             onOpenPortsPage={(opts) => {
               setOpenPortsInitialTab(opts?.tab ?? 'listen')
               setSurface('open-ports')
@@ -236,6 +328,7 @@ export default function App(): JSX.Element {
               setNotesInitialSelectedId(typeof opts?.createdAt === 'number' ? opts.createdAt : null)
               setSurface('notes')
             }}
+            onOpenEmojiPicker={() => setSurface('emoji-picker')}
           />
         )}
       </div>

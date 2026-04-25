@@ -368,6 +368,15 @@ const DESCRIPTORS: Record<NativeCommandId, NativeCommandDescriptor> = {
     keywords: ['notes', 'quick notes', 'notepad', 'rich text', 'memo', 'jot'],
     macOnly: false,
   },
+  'open-emoji-picker': {
+    id: 'open-emoji-picker',
+    title: 'Emoji Picker',
+    subtitle: 'Browse and copy emojis by name, mood, and category.',
+    category: 'productivity',
+    strategy: 'native-helper',
+    keywords: ['emoji', 'smiley', 'symbol', 'icon', 'face', 'emoticon'],
+    macOnly: false,
+  },
 }
 
 export function getNativeCommand(id: NativeCommandId): NativeCommandDescriptor | null {

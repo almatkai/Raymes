@@ -154,6 +154,22 @@ export async function listModelsForProvider(id: ProviderId, signal?: AbortSignal
       const token = await cp.getAccessToken({ signal })
       return fetchCopilotModelIds(token, signal)
     }
+    case 'opencode': {
+      try {
+        const { execFile } = await import('node:child_process')
+        const { promisify } = await import('node:util')
+        const execFileAsync = promisify(execFile)
+        const { stdout } = await execFileAsync('opencode', ['models'], { timeout: 12_000, signal })
+        const models = stdout
+          .replace(/\x1b\[[0-9;]*m/g, '')
+          .split('\n')
+          .map((line) => line.trim())
+          .filter((line) => line.startsWith('opencode/'))
+        return models.length > 0 ? models : ['opencode/big-pickle']
+      } catch {
+        return ['opencode/big-pickle']
+      }
+    }
     default:
       return []
   }

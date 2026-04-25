@@ -7,6 +7,7 @@ type RankFeatures = {
   successRate: number
   category: SearchCategory
   fuzzyDistance?: number
+  popularity?: number
 }
 
 const CATEGORY_PRIOR: Record<SearchCategory, number> = {
@@ -53,7 +54,15 @@ export function computeWeightedScore(input: RankFeatures): number {
   const prior = CATEGORY_PRIOR[input.category] ?? 0.35
   const fuzzy = fuzzyBonus(input.fuzzyDistance)
 
-  const weighted = lexical * 0.62 + recency * 0.14 + frequency * 0.12 + success * 0.07 + prior * 0.05 + fuzzy
+  const popularity = input.popularity ? Math.min(1, Math.log10(input.popularity + 1) / 7) : 0
+  const weighted =
+    lexical * 0.6 +
+    recency * 0.1 +
+    frequency * 0.1 +
+    success * 0.05 +
+    prior * 0.05 +
+    fuzzy +
+    popularity * 0.1
   return Math.round(weighted * 1000)
 }
 

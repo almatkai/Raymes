@@ -1,6 +1,6 @@
 import { app, BrowserWindow, globalShortcut, Menu, nativeImage, screen, session, Tray } from 'electron'
 import { join } from 'node:path'
-import { getUiStateRetentionMs } from './llm/configStore'
+import { getUiStateRetentionMs, flushConfig } from './llm/configStore'
 import { registerIpcHandlers, shutdownIpcHandlers } from './ipc'
 import {
   startClipboardWatcher,
@@ -16,12 +16,248 @@ import {
 
 import { isPhysicalKeyDown } from './bridge'
 import { shouldSuppressBlurHide } from './windowState'
+import { getPersistedWindowPosition, setPersistedWindowPosition } from './llm/configStore'
+import {
+  cleanupCenterOverlay,
+  hideCenterOverlay,
+  prepareCenterOverlay,
+  showCenterOverlay,
+} from './center-overlay'
 
 let mainWindow: BrowserWindow | null = null
 let tray: Tray | null = null
 let commandBarVisible = false
 /** Set when the palette is hidden; used to decide whether to reset renderer UI on reopen. */
 let lastPaletteHideAt: number | null = null
+
+/* ---------------------------------------------------------------------------
+   Snap-to-center constants
+   --------------------------------------------------------------------------- */
+/** Distance (px) at which the window magnetically snaps to screen center. */
+const SNAP_THRESHOLD = 12
+const UNSNAP_BUFFER = 6
+let dragMonitorTimer: NodeJS.Timeout | null = null
+let dragReleaseTimer: NodeJS.Timeout | null = null
+let dragFinalizeTimer: NodeJS.Timeout | null = null
+let dragSessionActive = false
+let dragSnapLocked = false
+let isMouseDown = false
+
+let lastSnapPayload: { visible: boolean; active: boolean } | null = null
+
+function sendWindowSnapGuides(
+  win: BrowserWindow,
+  payload: { visible: boolean; active: boolean },
+): void {
+  if (win.isDestroyed() || win.webContents.isDestroyed()) return
+
+  // Only send and log if the state has actually changed
+  if (
+    lastSnapPayload &&
+    lastSnapPayload.visible === payload.visible &&
+    lastSnapPayload.active === payload.active
+  ) {
+    return
+  }
+
+  lastSnapPayload = { ...payload }
+  const randomId = Math.random().toString(36).substring(7)
+  console.log(`[DEBUG:SnapGuides] [${randomId}] Sending to renderer:`, payload)
+  win.webContents.send('window:snap-guides', payload)
+}
+
+/** Return the top-left position that would center `win` on its nearest display. */
+function getScreenCenter(win: BrowserWindow): { x: number; y: number } {
+  const bounds = win.getBounds()
+  const display = screen.getDisplayNearestPoint({
+    x: bounds.x + Math.floor(bounds.width / 2),
+    y: bounds.y + Math.floor(bounds.height / 2),
+  })
+  const { workArea } = display
+  return {
+    x: workArea.x + Math.floor((workArea.width - bounds.width) / 2),
+    y: workArea.y + Math.floor((workArea.height - bounds.height) / 2),
+  }
+}
+
+function snapWindowToCenter(win: BrowserWindow): void {
+  if (win.isDestroyed()) return
+  const bounds = win.getBounds()
+  const center = getScreenCenter(win)
+  if (bounds.x === center.x && bounds.y === center.y) return
+  isProgrammaticMove = true
+  win.setBounds(
+    {
+      x: center.x,
+      y: center.y,
+      width: bounds.width,
+      height: bounds.height,
+    },
+    false,
+  )
+  setTimeout(() => {
+    isProgrammaticMove = false
+  }, 0)
+}
+
+function updateWindowSnapState(win: BrowserWindow): void {
+  if (win.isDestroyed() || isProgrammaticMove) return
+  const bounds = win.getBounds()
+  const display = screen.getDisplayNearestPoint({
+    x: bounds.x + Math.floor(bounds.width / 2),
+    y: bounds.y + Math.floor(bounds.height / 2),
+  })
+  const { workArea } = display
+  const windowCenterX = bounds.x + bounds.width / 2
+  const windowCenterY = bounds.y + bounds.height / 2
+  const screenCenterX = workArea.x + workArea.width / 2
+  const screenCenterY = workArea.y + workArea.height / 2
+  const dx = Math.abs(windowCenterX - screenCenterX)
+  const dy = Math.abs(windowCenterY - screenCenterY)
+  
+  // Log distance occasionally to avoid spamming even more, but enough to see progress
+  if (Math.random() < 0.1) {
+    console.log(`[DEBUG:SnapGuides] Monitoring - distance to center: dx=${Math.round(dx)}, dy=${Math.round(dy)}`)
+  }
+
+  const releaseThreshold = SNAP_THRESHOLD + UNSNAP_BUFFER
+
+  if (dragSnapLocked) {
+    if (dx > releaseThreshold || dy > releaseThreshold) {
+      dragSnapLocked = false
+      sendWindowSnapGuides(win, { visible: true, active: false })
+      showCenterOverlay(win, 'approaching')
+      return
+    }
+    snapWindowToCenter(win)
+    sendWindowSnapGuides(win, { visible: true, active: true })
+    showCenterOverlay(win, 'snap-ready')
+    return
+  }
+
+  const nearVerticalCenter = dx < SNAP_THRESHOLD
+  const nearHorizontalCenter = dy < SNAP_THRESHOLD
+  if (nearVerticalCenter && nearHorizontalCenter) {
+    if (!dragSnapLocked) {
+      console.log(`[DEBUG:SnapGuides] Snap detected! X:${bounds.x} Y:${bounds.y}`)
+    }
+    dragSnapLocked = true
+    snapWindowToCenter(win)
+    sendWindowSnapGuides(win, { visible: true, active: true })
+    showCenterOverlay(win, 'snap-ready')
+    return
+  }
+  sendWindowSnapGuides(win, { visible: true, active: false })
+  showCenterOverlay(win, 'approaching')
+}
+
+function startWindowDragMonitoring(win: BrowserWindow): void {
+  if (dragFinalizeTimer !== null) {
+    clearTimeout(dragFinalizeTimer)
+    dragFinalizeTimer = null
+  }
+  if (win.isDestroyed() || dragSessionActive) return
+  const sessionId = Math.random().toString(36).substring(7)
+  console.log(`[DEBUG:SnapGuides] [${sessionId}] startWindowDragMonitoring`)
+  dragSessionActive = true
+  dragSnapLocked = false
+  sendWindowSnapGuides(win, { visible: true, active: false })
+  showCenterOverlay(win, 'approaching')
+  if (dragMonitorTimer !== null) {
+    clearInterval(dragMonitorTimer)
+  }
+  dragMonitorTimer = setInterval(() => {
+    updateWindowSnapState(win)
+  }, 16)
+}
+
+function pauseWindowDragMonitoring(win: BrowserWindow): void {
+  if (!dragSessionActive) return
+  console.log('[DEBUG:SnapGuides] pausing drag monitoring, waiting for release')
+  dragSessionActive = false
+  dragSnapLocked = false
+  if (dragMonitorTimer !== null) {
+    clearInterval(dragMonitorTimer)
+    dragMonitorTimer = null
+  }
+  if (dragReleaseTimer !== null) {
+    clearTimeout(dragReleaseTimer)
+    dragReleaseTimer = null
+  }
+  sendWindowSnapGuides(win, { visible: false, active: false })
+  hideCenterOverlay()
+}
+
+function scheduleWindowDragFinalize(win: BrowserWindow): void {
+  if (dragFinalizeTimer !== null) {
+    clearTimeout(dragFinalizeTimer)
+  }
+  dragFinalizeTimer = setTimeout(() => {
+    dragFinalizeTimer = null
+    if (dragSessionActive || win.isDestroyed() || !isMouseDown) return
+    console.log('[DEBUG:SnapGuides] drag idle finalized, preserving held state')
+    const [curX, curY] = win.getPosition()
+    setPersistedWindowPosition({ x: curX, y: curY })
+  }, 900)
+}
+
+function scheduleWindowDragRelease(win: BrowserWindow): void {
+  if (dragReleaseTimer !== null) {
+    clearTimeout(dragReleaseTimer)
+  }
+  dragReleaseTimer = setTimeout(() => {
+    dragReleaseTimer = null
+    if (!dragSessionActive || win.isDestroyed()) return
+    console.log('[DEBUG:SnapGuides] drag idle detected, pausing monitoring')
+    pauseWindowDragMonitoring(win)
+    scheduleWindowDragFinalize(win)
+  }, 120)
+}
+
+function stopWindowDragMonitoring(win: BrowserWindow): void {
+  if (!dragSessionActive) {
+    console.log('[DEBUG:SnapGuides] stopWindowDragMonitoring called but dragSessionActive is false')
+    return
+  }
+  const stopId = Math.random().toString(36).substring(7)
+  console.log(`[DEBUG:SnapGuides] [${stopId}] stopWindowDragMonitoring - STOPPING`)
+  dragSessionActive = false
+  dragSnapLocked = false
+  isMouseDown = false
+  if (dragFinalizeTimer !== null) {
+    clearTimeout(dragFinalizeTimer)
+    dragFinalizeTimer = null
+  }
+  if (dragReleaseTimer !== null) {
+    clearTimeout(dragReleaseTimer)
+    dragReleaseTimer = null
+  }
+  if (dragMonitorTimer !== null) {
+    clearInterval(dragMonitorTimer)
+    dragMonitorTimer = null
+  }
+  sendWindowSnapGuides(win, { visible: false, active: false })
+  hideCenterOverlay()
+  if (!win.isDestroyed()) {
+    const [curX, curY] = win.getPosition()
+    setPersistedWindowPosition({ x: curX, y: curY })
+  }
+}
+
+function handleNativeWillMove(win: BrowserWindow): void {
+  if (win.isDestroyed() || isProgrammaticMove) return
+  console.log('[DEBUG:SnapGuides] handleNativeWillMove')
+  startWindowDragMonitoring(win)
+  scheduleWindowDragRelease(win)
+}
+
+function handleNativeMove(win: BrowserWindow): void {
+  if (win.isDestroyed() || isProgrammaticMove) return
+  console.log('[DEBUG:SnapGuides] handleNativeMove')
+  // Keep drag session alive even when OS emits sparse move events.
+  startWindowDragMonitoring(win)
+  scheduleWindowDragRelease(win)
+}
 
 /** After Alt+Space opens the launcher, poll HID key state so a sustained chord
  *  starts local dictation (push-to-talk) while `globalShortcut` only fires once. */
@@ -145,6 +381,12 @@ function isAltSpaceReleaseInput(input: Electron.Input): boolean {
   )
 }
 
+function isMouseReleaseInput(input: Electron.Input): boolean {
+  const isUp = input.type === 'mouseUp'
+  if (isUp) console.log('[DEBUG:SnapGuides] isMouseReleaseInput: mouseUp detected')
+  return isUp
+}
+
 function startAltSpaceHoldWatcher(): void {
   stopAltSpaceHoldWatcher()
   if (process.platform !== 'darwin') {
@@ -225,7 +467,29 @@ function isPaletteUiStale(lastHideAt: number | null, ttlMs: number): boolean {
   return Date.now() - lastHideAt > ttlMs
 }
 
+let isProgrammaticMove = false
+
 function placeWindow(win: BrowserWindow): void {
+  isProgrammaticMove = true
+  const persisted = getPersistedWindowPosition()
+  if (persisted) {
+    const displays = screen.getAllDisplays()
+    const isVisible = displays.some((display) => {
+      const bounds = display.bounds
+      return (
+        persisted.x >= bounds.x &&
+        persisted.x < bounds.x + bounds.width &&
+        persisted.y >= bounds.y &&
+        persisted.y < bounds.y + bounds.height
+      )
+    })
+    if (isVisible) {
+      win.setPosition(persisted.x, persisted.y)
+      setTimeout(() => { isProgrammaticMove = false }, 100)
+      return
+    }
+  }
+
   const cursor = screen.getCursorScreenPoint()
   const { width, height, x, y } = screen.getDisplayNearestPoint(cursor).workArea
   const [, curH] = win.getContentSize()
@@ -233,6 +497,7 @@ function placeWindow(win: BrowserWindow): void {
   const winX = x + Math.floor((width - WINDOW_WIDTH) / 2)
   const winY = y + Math.floor(height * WINDOW_TOP_FACTOR)
   win.setBounds({ x: winX, y: winY, width: WINDOW_WIDTH, height: contentH })
+  setTimeout(() => { isProgrammaticMove = false }, 100)
 }
 
 function showCommandBar(): void {
@@ -249,6 +514,7 @@ function showCommandBar(): void {
   }
 
   placeWindow(mainWindow)
+  prepareCenterOverlay(mainWindow)
   mainWindow.show()
   mainWindow.focus()
   commandBarVisible = true
@@ -270,6 +536,7 @@ function hideCommandBar(): void {
 
   commandBarVisible = false
   lastPaletteHideAt = Date.now()
+  stopWindowDragMonitoring(mainWindow)
   mainWindow.hide()
 }
 
@@ -306,8 +573,35 @@ function createWindow(): void {
     mainWindow.setAlwaysOnTop(true, 'floating')
   }
 
+  // Native drag lifecycle for frameless windows is most reliable on macOS.
+  // This avoids depending on renderer mouse events in `-webkit-app-region: drag`.
+  mainWindow.on('will-move', () => {
+    console.log('[DEBUG:SnapGuides] will-move event')
+    // will-move fires when the OS initiates a drag, so this is our best indicator
+    // that a drag session is starting (even before mouseDown reaches main process)
+    isMouseDown = true
+    if (mainWindow) handleNativeWillMove(mainWindow)
+  })
+  mainWindow.on('move', () => {
+    console.log('[DEBUG:SnapGuides] move event, isMouseDown:', isMouseDown)
+    if (mainWindow && dragSessionActive) {
+      scheduleWindowDragRelease(mainWindow)
+    }
+    if (mainWindow && isMouseDown) handleNativeMove(mainWindow)
+  })
+
+  mainWindow.on('moved', () => {
+    console.log('[DEBUG:SnapGuides] native window event: moved')
+    if (dragSessionActive && mainWindow) {
+      console.log('[DEBUG:SnapGuides] moved event: refreshing release timer')
+      scheduleWindowDragRelease(mainWindow)
+    }
+  })
+
   mainWindow.on('blur', () => {
+    console.log('[DEBUG:SnapGuides] native window event: blur')
     if (shouldSuppressBlurHide()) return
+    stopWindowDragMonitoring(mainWindow!)
     hideCommandBar()
   })
 
@@ -319,9 +613,35 @@ function createWindow(): void {
   })
 
   mainWindow.webContents.on('before-input-event', (_event, input) => {
+    if (input.type.startsWith('mouse')) {
+      console.log('[DEBUG:SnapGuides] before-input-event mouse event:', input.type)
+    }
+    if (input.type === 'mouseDown') {
+      console.log('[DEBUG:SnapGuides] before-input-event: mouseDown detected')
+      isMouseDown = true
+    }
+    if (input.type === 'mouseUp') {
+      console.log('[DEBUG:SnapGuides] before-input-event: mouseUp detected')
+    }
+    if (mainWindow && isMouseReleaseInput(input)) {
+      console.log('[DEBUG:SnapGuides] before-input-event: mouseUp detected (calling stop)')
+      // Reliable release hook for frameless drag regions: finalize drag state,
+      // persist last coordinates, and hide overlay immediately on mouse-up.
+      stopWindowDragMonitoring(mainWindow)
+    }
     if (altSpaceFocusedPressedAt === 0) return
     if (!isAltSpaceReleaseInput(input)) return
     finishFocusedAltSpaceGestureOnRelease()
+  })
+
+  // Reliable release hook for frameless drag regions: finalize drag state,
+  // persist last coordinates, and hide overlay immediately on mouse-up.
+  mainWindow.webContents.on('cursor-changed', (_event, type) => {
+    console.log('[DEBUG:SnapGuides] cursor-changed event:', type)
+    if (type === 'default' && dragSessionActive && mainWindow) {
+      console.log('[DEBUG:SnapGuides] cursor-changed: default detected during active drag (calling stop)')
+      stopWindowDragMonitoring(mainWindow)
+    }
   })
 
   if (process.env['ELECTRON_RENDERER_URL']) {
@@ -377,7 +697,10 @@ app.whenReady().then(() => {
     return permission === 'media'
   })
 
-  registerIpcHandlers(() => mainWindow)
+  registerIpcHandlers(() => mainWindow, {
+    startWindowDragMonitoring,
+    stopWindowDragMonitoring,
+  })
   createWindow()
   placeWindow(mainWindow!)
 
@@ -407,6 +730,8 @@ app.on('will-quit', () => {
   globalShortcut.unregisterAll()
   stopClipboardWatcher()
   shutdownIpcHandlers()
+  flushConfig()
+  cleanupCenterOverlay()
 })
 
 app.on('window-all-closed', () => {

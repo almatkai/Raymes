@@ -25,6 +25,7 @@ export type SearchAction =
   | { type: 'open-app'; appName: string }
   | { type: 'open-file'; path: string }
   | { type: 'copy-text'; text: string }
+  | { type: 'copy-and-paste-text'; text: string }
   | { type: 'add-note'; text: string }
   | { type: 'open-url'; url: string }
   | { type: 'install-extension'; extensionId: string }

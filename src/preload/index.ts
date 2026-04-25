@@ -24,6 +24,25 @@ contextBridge.exposeInMainWorld('raymes', {
     ipcRenderer.invoke('extensions:reinstall', extensionId),
   getExtensionInstallError: (extensionId: string) =>
     ipcRenderer.invoke('extensions:install-error', extensionId),
+  extensionList: () => ipcRenderer.invoke('extension:list'),
+  extensionSearchStore: (query: string) => ipcRenderer.invoke('extension:search-store', query),
+  extensionInstall: (extensionId: string) => ipcRenderer.invoke('extension:install', extensionId),
+  extensionUninstall: (extensionId: string) => ipcRenderer.invoke('extension:uninstall', extensionId),
+  extensionRunCommand: (payload: {
+    extensionId: string
+    commandName: string
+    argumentValues?: Record<string, string>
+  }) => ipcRenderer.invoke('extension:run-command', payload),
+  extensionInvokeAction: (payload: {
+    sessionId: string
+    actionId: string
+    formValues?: Record<string, string>
+  }) => ipcRenderer.invoke('extension:invoke-action', payload),
+  clipboardReadText: () => ipcRenderer.invoke('clipboard:read'),
+  clipboardWriteText: (text: string) => ipcRenderer.invoke('clipboard:write', text),
+  shellOpen: (target: string) => ipcRenderer.invoke('shell:open', target),
+  getExtensionPreferences: (payload: { extensionId: string; commandName?: string }) =>
+    ipcRenderer.invoke('preferences:get', payload),
   searchAll: (query: string) => ipcRenderer.invoke(IPC_CHANNELS.SEARCH_ALL, query),
   runSearchBenchmark: () => ipcRenderer.invoke(IPC_CHANNELS.SEARCH_BENCHMARK_RUN),
   getSearchBenchmarkHistory: () => ipcRenderer.invoke(IPC_CHANNELS.SEARCH_BENCHMARK_HISTORY),
@@ -96,6 +115,21 @@ contextBridge.exposeInMainWorld('raymes', {
     ipcRenderer.on('window-shown', handler)
     return (): void => {
       ipcRenderer.removeListener('window-shown', handler)
+    }
+  },
+  startWindowSnapDrag: () => ipcRenderer.invoke('window:snap-drag-start'),
+  endWindowSnapDrag: () => ipcRenderer.invoke('window:snap-drag-end'),
+  onWindowSnapGuides: (listener: (payload: { visible: boolean; active: boolean }) => void) => {
+    const channel = 'window:snap-guides'
+    const handler = (
+      _event: IpcRendererEvent,
+      payload: { visible?: boolean; active?: boolean },
+    ): void => {
+      listener({ visible: payload?.visible === true, active: payload?.active === true })
+    }
+    ipcRenderer.on(channel, handler)
+    return (): void => {
+      ipcRenderer.removeListener(channel, handler)
     }
   },
   onVoiceHotkeyHold: (listener: (payload: { phase: 'press' | 'release' }) => void) => {
