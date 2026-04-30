@@ -1,8 +1,10 @@
 import { clipboard, shell } from 'electron'
 import * as esbuild from 'esbuild'
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs'
+import { execSync } from 'node:child_process'
+import { homedir } from 'node:os'
 import { createRequire, builtinModules } from 'node:module'
-import { dirname, join } from 'node:path'
+import { basename, dirname, join } from 'node:path'
 import vm from 'node:vm'
 import type {
   ExtensionInvokeActionRequest,
@@ -11,6 +13,8 @@ import type {
   ExtensionRunCommandResult,
   ExtensionRuntimeAction,
   ExtensionRuntimeNode,
+  ExtensionSearchTextChangedRequest,
+  ExtensionSearchTextChangedResult,
 } from '../shared/extensionRuntime'
 import { getExtensionPreferences, resolveInstalledPackageJsonPath } from './extension-registry'
 
@@ -51,6 +55,17 @@ type RuntimeSession = {
   feedback: RuntimeFeedback[]
   stack: unknown[]
   preferences: Record<string, unknown>
+  searchTextChangeHandler: ((text: string) => void) | null
+  commandFn: ((...args: unknown[]) => unknown) | null
+  commandArgs: Record<string, string>
+  bundledCode: string
+  searchText: string
+  hookStates: unknown[]
+  hookIndex: number
+  pendingPromises: Array<Promise<unknown>>
+  promiseCache: Map<string, { data: unknown; error: unknown }>
+  effectCleanups: Map<number, (() => void)>
+  hookStateSnapshot: string | null
 }
 
 type JsxNode = {
@@ -168,7 +183,7 @@ function createJsxRuntimeShim(): Record<string, unknown> {
   }
 }
 
-function createReactShim(): Record<string, unknown> {
+function createReactShim(session: RuntimeSession): Record<string, unknown> {
   const jsxRuntime = createJsxRuntimeShim()
   const jsx = jsxRuntime.jsx as (type: unknown, props?: Record<string, unknown>, key?: unknown) => JsxNode
 
@@ -184,30 +199,73 @@ function createReactShim(): Record<string, unknown> {
       return jsx(type, nextProps)
     },
     useState: <T,>(initial: T | (() => T)): [T, (next: T | ((prev: T) => T)) => void] => {
-      const value = typeof initial === 'function' ? (initial as () => T)() : initial
-      const setState = (): void => {
-        // This runtime is single-pass and intentionally stateless.
+      const idx = session.hookIndex++
+      if (session.hookStates.length > idx) {
+        return session.hookStates[idx] as [T, (next: T | ((prev: T) => T)) => void]
       }
-      return [value, setState]
+      let value = typeof initial === 'function' ? (initial as () => T)() : initial
+      const setState = (next: T | ((prev: T) => T)): void => {
+        value = typeof next === 'function' ? (next as (prev: T) => T)(value) : next
+        session.hookStates[idx] = [value, setState]
+      }
+      const tuple: [T, (next: T | ((prev: T) => T)) => void] = [value, setState]
+      session.hookStates[idx] = tuple
+      return tuple
     },
-    useEffect: (): void => {
-      // No-op: side effects are not replayed across renders in this runtime.
+    useEffect: (sideEffect: () => void | (() => void)): void => {
+      const idx = session.hookIndex++
+      try {
+        const cleanup = sideEffect()
+        if (typeof cleanup === 'function') {
+          session.effectCleanups.set(idx, cleanup)
+        }
+      } catch (e) {
+        console.error('[useEffect] side effect threw:', e)
+      }
     },
-    useLayoutEffect: (): void => {
-      // No-op.
+    useLayoutEffect: (sideEffect: () => void | (() => void)): void => {
+      const idx = session.hookIndex++
+      try {
+        const cleanup = sideEffect()
+        if (typeof cleanup === 'function') {
+          session.effectCleanups.set(idx, cleanup)
+        }
+      } catch (e) {
+        console.error('[useLayoutEffect] side effect threw:', e)
+      }
     },
-    useMemo: <T,>(factory: () => T): T => factory(),
-    useCallback: <T extends (...args: unknown[]) => unknown>(callback: T): T => callback,
-    useRef: <T,>(value: T): { current: T } => ({ current: value }),
-    useContext: (): null => null,
+    useMemo: <T,>(factory: () => T): T => {
+      session.hookIndex++
+      return factory()
+    },
+    useCallback: <T extends (...args: unknown[]) => unknown>(callback: T): T => {
+      session.hookIndex++
+      return callback
+    },
+    useRef: <T,>(value: T): { current: T } => {
+      session.hookIndex++
+      return { current: value }
+    },
+    useContext: (): null => {
+      session.hookIndex++
+      return null
+    },
     useReducer: <S, A>(
       reducer: (state: S, action: A) => S,
       initialArg: S,
     ): [S, (action: A) => void] => {
+      const idx = session.hookIndex++
+      if (session.hookStates.length > idx) {
+        return session.hookStates[idx] as [S, (action: A) => void]
+      }
       let current = initialArg
-      return [current, (action: A) => {
+      const dispatch = (action: A): void => {
         current = reducer(current, action)
-      }]
+        session.hookStates[idx] = [current, dispatch]
+      }
+      const tuple: [S, (action: A) => void] = [current, dispatch]
+      session.hookStates[idx] = tuple
+      return tuple
     },
     memo: <T,>(component: T): T => component,
     forwardRef: <T,>(renderer: T): T => renderer,
@@ -310,6 +368,106 @@ function createLocalStorageShim(packageRoot: string): Record<string, unknown> {
   }
 }
 
+function createCacheShim(packageRoot: string): new (
+  options?: { namespace?: string },
+) => {
+  get: (key: string) => string | undefined
+  set: (key: string, value: string) => void
+  has: (key: string) => boolean
+  remove: (key: string) => boolean
+  clear: (_options?: { notifySubscribers?: boolean }) => void
+  subscribe: (subscriber: (key: string | undefined, value: string | undefined) => void) => () => void
+  readonly isEmpty: boolean
+} {
+  return class CacheShim {
+    private readonly subscribers = new Set<
+      (key: string | undefined, value: string | undefined) => void
+    >()
+
+    private readonly storagePath: string
+
+    constructor(options?: { namespace?: string }) {
+      const rawNamespace =
+        typeof options?.namespace === 'string' && options.namespace.trim().length > 0
+          ? options.namespace.trim()
+          : 'shared'
+      const safeNamespace = rawNamespace.replace(/[^a-z0-9._-]+/gi, '_')
+      this.storagePath = join(packageRoot, '.raymes-support', 'cache', `${safeNamespace}.json`)
+    }
+
+    private readAll(): Record<string, string> {
+      if (!existsSync(this.storagePath)) return {}
+      try {
+        const parsed = JSON.parse(readFileSync(this.storagePath, 'utf8')) as Record<string, string>
+        return parsed && typeof parsed === 'object' ? parsed : {}
+      } catch {
+        return {}
+      }
+    }
+
+    private writeAll(value: Record<string, string>): void {
+      mkdirSync(dirname(this.storagePath), { recursive: true })
+      writeFileSync(this.storagePath, JSON.stringify(value, null, 2), 'utf8')
+    }
+
+    private notify(key: string | undefined, value: string | undefined): void {
+      for (const subscriber of this.subscribers) {
+        try {
+          subscriber(key, value)
+        } catch {
+          // Ignore extension subscriber failures so cache writes remain safe.
+        }
+      }
+    }
+
+    get isEmpty(): boolean {
+      return Object.keys(this.readAll()).length === 0
+    }
+
+    get(key: string): string | undefined {
+      return this.readAll()[String(key)]
+    }
+
+    set(key: string, value: string): void {
+      const all = this.readAll()
+      all[String(key)] = String(value)
+      this.writeAll(all)
+      this.notify(String(key), String(value))
+    }
+
+    has(key: string): boolean {
+      return Object.prototype.hasOwnProperty.call(this.readAll(), String(key))
+    }
+
+    remove(key: string): boolean {
+      const all = this.readAll()
+      const normalizedKey = String(key)
+      const existed = Object.prototype.hasOwnProperty.call(all, normalizedKey)
+      if (!existed) return false
+      delete all[normalizedKey]
+      this.writeAll(all)
+      this.notify(normalizedKey, undefined)
+      return true
+    }
+
+    clear(options?: { notifySubscribers?: boolean }): void {
+      this.writeAll({})
+      if (options?.notifySubscribers !== false) {
+        this.notify(undefined, undefined)
+      }
+    }
+
+    subscribe(
+      subscriber: (key: string | undefined, value: string | undefined) => void,
+    ): () => void {
+      this.subscribers.add(subscriber)
+      return () => {
+        this.subscribers.delete(subscriber)
+      }
+    }
+  }
+}
+
 function createRaycastApiShim(session: RuntimeSession): Record<string, unknown> {
   const List = Object.assign(makeToken('List'), {
     Item: makeToken('List.Item'),
@@ -369,8 +527,12 @@ function createRaycastApiShim(session: RuntimeSession): Record<string, unknown> 
       commandMode: 'view',
       assetsPath: join(session.packageRoot, 'assets'),
       supportPath: join(session.packageRoot, '.raymes-support'),
+      get searchText(): string {
+        return session.searchText
+      },
     },
     LocalStorage: createLocalStorageShim(session.packageRoot),
+    Cache: createCacheShim(session.packageRoot),
     Clipboard: {
       copy: async (value: unknown): Promise<void> => {
         clipboard.writeText(String(value ?? ''))
@@ -441,6 +603,52 @@ function createRaycastApiShim(session: RuntimeSession): Record<string, unknown> 
       if (typeof path !== 'string') return
       shell.showItemInFolder(path)
     },
+    getApplications: async (): Promise<Array<{ name: string; path: string; bundleId?: string }>> => {
+      console.log('[getApplications] Starting Spotlight query for installed apps...')
+      try {
+        const output = execSync('mdfind "kMDItemKind == \'Application\'" 2>/dev/null', {
+          encoding: 'utf8',
+          maxBuffer: 10 * 1024 * 1024,
+          timeout: 3000,
+        })
+        const apps = output.trim().split('\n')
+          .filter((p) => p.endsWith('.app'))
+          .map((appPath) => ({ name: basename(appPath, '.app'), path: appPath }))
+          .sort((a, b) => a.name.localeCompare(b.name))
+        console.log(`[getApplications] mdfind returned ${apps.length} applications`)
+        return apps
+      } catch (err) {
+        console.warn('[getApplications] mdfind failed, falling back to directory scan:', err)
+        const apps: Array<{ name: string; path: string }> = []
+        const dirs = ['/Applications', '/System/Applications', join(homedir(), 'Applications')]
+        for (const dir of dirs) {
+          try {
+            for (const entry of readdirSync(dir)) {
+              if (entry.endsWith('.app')) {
+                apps.push({ name: basename(entry, '.app'), path: join(dir, entry) })
+              }
+            }
+          } catch (dirErr) {
+            console.warn(`[getApplications] Could not scan directory ${dir}:`, dirErr)
+          }
+        }
+        console.log(`[getApplications] Directory scan found ${apps.length} applications`)
+        return apps.sort((a, b) => a.name.localeCompare(b.name))
+      }
+    },
+    getFrontmostApplication: async (): Promise<{ name: string; path: string; bundleId?: string } | null> => {
+      try {
+        const script = 'tell application "System Events" to get name of first application process whose frontmost is true'
+        const name = execSync(`osascript -e '${script}' 2>/dev/null`, { encoding: 'utf8', timeout: 3000 }).trim()
+        if (name) return { name, path: `/Applications/${name}.app` }
+        return null
+      } catch {
+        return null
+      }
+    },
+    getDefaultApplication: async (_pathOrUrl: string): Promise<{ name: string; path: string } | null> => {
+      return null
+    },
     confirmAlert: async (): Promise<boolean> => true,
     openExtensionPreferences: async (): Promise<void> => {
       // Preferences editing is handled by Raymes settings.
@@ -452,29 +660,80 @@ function createRaycastApiShim(session: RuntimeSession): Record<string, unknown> 
 }
 
 function createRaycastUtilsShim(session: RuntimeSession): Record<string, unknown> {
+  const cacheKey = (fn: unknown, args: unknown[]): string => {
+    const fnSig = typeof fn === 'function' ? fn.toString().slice(0, 120) : String(fn)
+    let argsKey: string
+    try {
+      argsKey = JSON.stringify(args)
+    } catch {
+      argsKey = String(args)
+    }
+    return `${fnSig}:${argsKey}`
+  }
+
+  const makePromiseHook = (): ((...args: unknown[]) => unknown) => {
+    return (fn: unknown, args?: unknown, options?: unknown) => {
+      const hookIdx = session.hookIndex++
+      const stableArgs = Array.isArray(args) ? args : []
+      const opts = (options && typeof options === 'object' ? options : {}) as { initialData?: unknown; execute?: boolean }
+      const key = `${hookIdx}:${cacheKey(fn, stableArgs)}`
+      const cached = session.promiseCache.get(key)
+      const shouldExecute = opts?.execute !== false
+
+      if (cached) {
+        console.log(`[usePromise] Pass 2: returning cached data (${Array.isArray(cached.data) ? (cached.data as unknown[]).length + ' items' : typeof cached.data})`)
+        return {
+          data: cached.data,
+          isLoading: false,
+          error: cached.error,
+          revalidate: async (): Promise<void> => {},
+          mutate: async (): Promise<unknown> => undefined,
+          pagination: undefined,
+        }
+      }
+
+      if (shouldExecute && typeof fn === 'function') {
+        try {
+          const result = fn(...stableArgs)
+          if (result != null && typeof (result as Promise<unknown>).then === 'function') {
+            console.log('[usePromise] Pass 1: fn returned a Promise, tracking for later resolution')
+            const promise = (result as Promise<unknown>)
+              .then((data: unknown) => {
+                const itemCount = Array.isArray(data) ? (data as unknown[]).length : 'non-array'
+                console.log(`[usePromise] Promise resolved with ${itemCount} items, caching for pass 2`)
+                session.promiseCache.set(key, { data, error: undefined })
+                return data
+              })
+              .catch((error: Error) => {
+                console.error('[usePromise] Promise rejected:', error.message)
+                session.promiseCache.set(key, { data: undefined, error })
+              })
+            session.pendingPromises.push(promise)
+          } else {
+            console.log(`[usePromise] Pass 1: fn returned sync data (${Array.isArray(result) ? (result as unknown[]).length + ' items' : typeof result})`)
+            session.promiseCache.set(key, { data: result, error: undefined })
+          }
+        } catch (error) {
+          console.error('[usePromise] fn threw synchronously:', error)
+          session.promiseCache.set(key, { data: undefined, error })
+        }
+      }
+
+      return {
+        data: opts?.initialData,
+        isLoading: shouldExecute,
+        error: undefined,
+        revalidate: async (): Promise<void> => {},
+        mutate: async (): Promise<unknown> => undefined,
+        pagination: undefined,
+      }
+    }
+  }
+
   return {
-    usePromise: () => ({
-      data: undefined,
-      isLoading: false,
-      error: undefined,
-      revalidate: async () => {},
-      mutate: async () => {},
-    }),
-    useFetch: () => ({
-      data: undefined,
-      isLoading: false,
-      error: undefined,
-      revalidate: async () => {},
-      mutate: async () => {},
-    }),
-    useCachedPromise: () => ({
-      data: undefined,
-      isLoading: false,
-      error: undefined,
-      revalidate: async () => {},
-      mutate: async () => {},
-      pagination: undefined,
-    }),
+    usePromise: makePromiseHook(),
+    useFetch: makePromiseHook(),
+    useCachedPromise: makePromiseHook(),
     showFailureToast: (error: unknown): void => {
       pushFeedback(session, {
         kind: 'toast',
@@ -657,6 +916,10 @@ function walkRuntimeNodes(
     return []
   }
 
+  if (typeName === 'List' && typeof props.onSearchTextChange === 'function') {
+    session.searchTextChangeHandler = props.onSearchTextChange as (text: string) => void
+  }
+
   budget.remaining -= 1
   const node: ExtensionRuntimeNode = {
     type: typeName,
@@ -667,15 +930,15 @@ function walkRuntimeNodes(
   return [node]
 }
 
-function formatFeedback(feedback: RuntimeFeedback | undefined): string {
-  if (!feedback) return 'Extension command completed.'
+function formatFeedback(feedback: RuntimeFeedback | undefined): string | undefined {
+  if (!feedback) return undefined
   if (feedback.kind === 'hud') {
-    return feedback.message || 'Extension command completed.'
+    return feedback.message || undefined
   }
   const title = feedback.title?.trim() || ''
   const message = feedback.message?.trim() || ''
   if (title && message) return `${title}: ${message}`
-  return title || message || 'Extension command completed.'
+  return title || message || undefined
 }
 
 function renderCurrentView(session: RuntimeSession): ExtensionRunCommandResult | ExtensionInvokeActionResult {
@@ -712,6 +975,93 @@ function renderCurrentView(session: RuntimeSession): ExtensionRunCommandResult |
   }
 }
 
+export async function updateSearchText(
+  request: ExtensionSearchTextChangedRequest,
+): Promise<ExtensionSearchTextChangedResult> {
+  const sessionId = String(request.sessionId || '').trim()
+  const searchText = String(request.searchText ?? '')
+  if (!sessionId) {
+    return { ok: false, message: 'sessionId is required.' }
+  }
+
+  const session = sessions.get(sessionId)
+  if (!session) {
+    return { ok: false, message: 'Extension session not found.' }
+  }
+
+  session.searchText = searchText
+
+  if (session.searchTextChangeHandler) {
+    try {
+      session.searchTextChangeHandler(searchText)
+    } catch (error) {
+      return {
+        ok: false,
+        message: error instanceof Error ? error.message : String(error),
+      }
+    }
+  }
+
+  if (session.commandFn) {
+    const snapshotStates = (): string => {
+      try { return JSON.stringify(session.hookStates) } catch { return String(session.hookStates.length) }
+    }
+
+    // Multi-pass search re-execution
+    try {
+      const execArgs = { arguments: session.commandArgs }
+
+      const searchPass = async (label: string): Promise<unknown> => {
+        console.log(`[Runner] ${label}: executing ${session.extensionId}/${session.commandName} search="${searchText}"`)
+        session.hookIndex = 0
+        session.pendingPromises = []
+        session.effectCleanups = new Map()
+        session.actionHandlers.clear()
+        session.currentActions = []
+        session.feedback = []
+        const r = await Promise.resolve(session.commandFn!(execArgs))
+        console.log(`[Runner] ${label} complete: ${session.pendingPromises.length} promises, ${session.hookStates.length} states`)
+        return r
+      }
+
+      let result = await searchPass('Search Pass 1')
+      let prevSnapshot = snapshotStates()
+
+      for (let p = 2; p <= 5; p += 1) {
+        const currSnapshot = snapshotStates()
+        const hasPromises = session.pendingPromises.length > 0
+        const stateChanged = currSnapshot !== prevSnapshot
+
+        if (!hasPromises && !stateChanged) break
+
+        if (hasPromises) {
+          await Promise.allSettled(session.pendingPromises)
+        }
+
+        result = await searchPass(`Search Pass ${p}`)
+        prevSnapshot = snapshotStates()
+      }
+
+      session.stack = isJsxNode(result) ? [result] : []
+
+      if (session.stack.length > 0) {
+        return renderCurrentView(session)
+      }
+    } catch (error) {
+      return {
+        ok: false,
+        message: error instanceof Error ? error.message : String(error),
+      }
+    }
+  }
+
+  return {
+    ok: true,
+    mode: 'no-view',
+    message: formatFeedback(session.feedback.at(-1)) || '',
+  }
+}
+
 function pruneSessions(): void {
   if (sessions.size <= SESSIONS_SOFT_LIMIT) return
   const ids = [...sessions.keys()]
@@ -729,7 +1079,7 @@ function runBundle(
 ): unknown {
   const fileRequire = createRequire(join(packageRoot, 'package.json'))
   const jsxRuntimeShim = createJsxRuntimeShim()
-  const reactShim = createReactShim()
+  const reactShim = createReactShim(session)
   const raycastApiShim = createRaycastApiShim(session)
   const raycastUtilsShim = createRaycastUtilsShim(session)
 
@@ -804,7 +1154,9 @@ async function runCommandFromPackagePath(
   const mode = String(command.mode || '').toLowerCase()
   const title = String(command.title || commandName)
   const entryPath = resolveCommandEntry(packageRoot, commandName, command)
+  console.log(`[Runner] Mode=${mode}, title="${title}", entry=${entryPath}`)
   const bundled = await bundleCommand(entryPath, packageRoot)
+  console.log(`[Runner] Bundle size: ${bundled.length} chars`)
 
   const session: RuntimeSession = {
     id: makeId('ext-session'),
@@ -817,6 +1169,17 @@ async function runCommandFromPackagePath(
     feedback: [],
     stack: [],
     preferences: getExtensionPreferences(extensionId, commandName),
+    searchTextChangeHandler: null,
+      commandFn: null,
+      commandArgs: argumentValues,
+      bundledCode: bundled,
+      searchText: '',
+      hookStates: [],
+      hookIndex: 0,
+      pendingPromises: [],
+      promiseCache: new Map(),
+      effectCleanups: new Map(),
+      hookStateSnapshot: null,
   }
 
   const moduleExports = runBundle(bundled, packageRoot, session)
@@ -825,10 +1188,53 @@ async function runCommandFromPackagePath(
     return { ok: false, message: 'Extension command entry is not executable.' }
   }
 
-  const result = await Promise.resolve(commandFn({ arguments: argumentValues }))
+  session.commandFn = commandFn as (...args: unknown[]) => unknown
+
+  // Multi-pass execution: effects change state → re-render → promises resolve → re-render
+  const execArgs = { arguments: argumentValues }
+  let result: unknown
+
+  const snapshotHookStates = (): string => {
+    try { return JSON.stringify(session.hookStates) } catch { return String(session.hookStates.length) }
+  }
+
+  const executePass = async (passLabel: string): Promise<void> => {
+    console.log(`[Runner] ${passLabel}: executing ${extensionId}/${commandName}`)
+    session.hookIndex = 0
+    session.pendingPromises = []
+    session.effectCleanups = new Map()
+    session.actionHandlers.clear()
+    session.currentActions = []
+    session.feedback = []
+    result = await Promise.resolve(commandFn(execArgs))
+    console.log(`[Runner] ${passLabel} complete: ${session.pendingPromises.length} promises, ${session.hookStates.length} hook states`)
+  }
+
+  // Pass 1: effects fire, emitter callbacks may set state
+  await executePass('Pass 1')
+  let prevSnapshot = snapshotHookStates()
+
+  // Pass 2+: effects may have triggered setState → re-render to pick up new state
+  for (let p = 2; p <= 5; p += 1) {
+    const currSnapshot = snapshotHookStates()
+    const hasPromises = session.pendingPromises.length > 0
+    const stateChanged = currSnapshot !== prevSnapshot
+
+    if (!hasPromises && !stateChanged) break
+
+    if (hasPromises) {
+      console.log(`[Runner] Pass ${p}: waiting for ${session.pendingPromises.length} promises...`)
+      await Promise.allSettled(session.pendingPromises)
+    } else {
+      console.log(`[Runner] Pass ${p}: state changed by effects, re-rendering...`)
+    }
+
+    await executePass(`Pass ${p}`)
+    prevSnapshot = snapshotHookStates()
+  }
 
   if (mode === 'no-view' || !isJsxNode(result)) {
-    const message = formatFeedback(session.feedback.at(-1))
+    const message = formatFeedback(session.feedback.at(-1)) || ''
     return {
       ok: true,
       mode: 'no-view',
@@ -847,14 +1253,17 @@ export async function runExtensionCommand(
 ): Promise<ExtensionRunCommandResult> {
   const extensionId = String(request.extensionId || '').trim()
   const commandName = String(request.commandName || '').trim()
+  console.log(`[Runner] runExtensionCommand called: ${extensionId}/${commandName}`)
   if (!extensionId || !commandName) {
     return { ok: false, message: 'Extension id and command name are required.' }
   }
 
   const packagePath = resolveInstalledPackageJsonPath(extensionId)
   if (!packagePath) {
+    console.error(`[Runner] Extension not installed: ${extensionId}`)
     return { ok: false, message: `Extension is not installed: ${extensionId}` }
   }
+  console.log(`[Runner] Found package.json at ${packagePath}`)
 
   try {
     return await runCommandFromPackagePath(
@@ -933,7 +1342,7 @@ export async function invokeExtensionAction(
     return {
       ok: true,
       mode: 'no-view',
-      message: formatFeedback(session.feedback.at(-1)),
+      message: formatFeedback(session.feedback.at(-1)) || '',
     }
   } catch (error) {
     return {

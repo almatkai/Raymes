@@ -10,6 +10,7 @@ import type {
 import type {
   ExtensionInvokeActionResult,
   ExtensionRunCommandResult,
+  ExtensionSearchTextChangedResult,
   InstalledRegistryExtension,
 } from '../shared/extensionRuntime'
 import type { LlmConfigRecord, ProviderId } from '../shared/llmConfig'
@@ -70,6 +71,10 @@ export type RaymesApi = {
     actionId: string
     formValues?: Record<string, string>
   }) => Promise<ExtensionInvokeActionResult>
+  extensionSearchTextChanged: (payload: {
+    sessionId: string
+    searchText: string
+  }) => Promise<ExtensionSearchTextChangedResult>
   clipboardReadText: () => Promise<string>
   clipboardWriteText: (text: string) => Promise<{ ok: boolean }>
   shellOpen: (target: string) => Promise<{ ok: boolean }>
@@ -166,6 +171,8 @@ export type RaymesApi = {
   agentCancel: () => Promise<{ ok: boolean }>
   /** Subscribe to agent run events (stages, message deltas, answers, errors). */
   onAgentEvent: (listener: (event: AgentRunEvent) => void) => () => void
+  /** Subscribe to extension install progress updates (0-100). */
+  onExtensionInstallProgress: (listener: (payload: { id: string; progress: number }) => void) => () => void
   /** Chat session history (AI-mode multi-turn conversations). */
   chatList: (limit?: number) => Promise<ChatSessionSummary[]>
   chatGet: (id: string) => Promise<ChatSession | null>

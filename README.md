@@ -1,6 +1,6 @@
 # Raymes
 
-![Raymes Screenshot](screenshot.png)
+![Raymes Screenshot](assets/screenshot.png)
 
 Raymes is a high-performance, lightweight spotlight alternative for macOS, blending the best of **Raycast** with the power of the **PI agent**. 
 
@@ -27,7 +27,7 @@ Raymes implements roughly half of the **Raycast** extension API, allowing for a 
 ### 🤖 The Agent (The Best Part)
 Raymes features an **Agent** built directly into the spotlight interface. 
 
-![Raymes Agent](agent-screenshot.png)
+![Raymes Agent](assets/agent-screenshot.png)
 
 - **Coding Assistant**: Powered by PI agent, capable of reading files, executing bash commands, and editing code directly from your search bar.
 - **Audio Input**: Support for voice commands using state-of-the-art local models:

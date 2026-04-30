@@ -13,10 +13,25 @@ import {
 export default function ExtensionsView({ onBack }: { onBack: () => void }): JSX.Element {
   const [query, setQuery] = useState('')
   const [loading, setLoading] = useState(false)
+  const [installing, setInstalling] = useState<Record<string, number>>({})
   const [store, setStore] = useState<ExtensionManifest[]>([])
   const [installed, setInstalled] = useState<InstalledExtension[]>([])
   const [msg, setMsg] = useState<{ tone: 'success' | 'error'; text: string } | null>(null)
   const rootRef = useRef<HTMLDivElement>(null)
+
+  useEffect(() => {
+    const cleanup = window.raymes.onExtensionInstallProgress((payload) => {
+      setInstalling((prev) => ({ ...prev, [payload.id]: payload.progress }))
+      if (payload.progress >= 100) {
+        setInstalling((prev) => {
+          const next = { ...prev }
+          delete next[payload.id]
+          return next
+        })
+      }
+    })
+    return cleanup
+  }, [])
 
   const reload = useCallback(async () => {
     setLoading(true)
@@ -96,7 +111,15 @@ export default function ExtensionsView({ onBack }: { onBack: () => void }): JSX.
       <section className="glass-card min-h-0 flex-1 overflow-y-auto px-4 py-3 pr-[calc(0.5rem+2px)] animate-raymes-scale-in">
         {store.length === 0 ? (
           <div className="flex min-h-[120px] items-center justify-center">
-            <p className="text-[12px] text-ink-3">No extensions match.</p>
+            {loading ? (
+              <div className="flex items-center gap-1.5">
+                <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-ink-3" />
+                <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-ink-3 [animation-delay:120ms]" />
+                <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-ink-3 [animation-delay:240ms]" />
+              </div>
+            ) : (
+              <p className="text-[12px] text-ink-3">No extensions match.</p>
+            )}
           </div>
         ) : (
           <ul className="stagger space-y-1.5">
@@ -126,13 +149,21 @@ export default function ExtensionsView({ onBack }: { onBack: () => void }): JSX.
                     </div>
                     <Button
                       variant={isInstalled ? 'danger' : 'primary'}
-                      disabled={loading}
+                      disabled={loading || !!installing[ext.id]}
                       onClick={() => {
+                        if (!isInstalled) {
+                          setInstalling((prev) => ({ ...prev, [ext.id]: 1 }))
+                        }
                         const action = isInstalled
                           ? window.raymes.extensionUninstall(ext.id)
                           : window.raymes.extensionInstall(ext.id)
                         void action
                           .then(() => {
+                            setInstalling((prev) => {
+                              const next = { ...prev }
+                              delete next[ext.id]
+                              return next
+                            })
                             setMsg({
                               tone: 'success',
                               text: `${isInstalled ? 'Removed' : 'Installed'} ${ext.name}`,
@@ -140,6 +171,11 @@ export default function ExtensionsView({ onBack }: { onBack: () => void }): JSX.
                             return reload()
                           })
                           .catch((e: unknown) => {
+                            setInstalling((prev) => {
+                              const next = { ...prev }
+                              delete next[ext.id]
+                              return next
+                            })
                             setMsg({
                               tone: 'error',
                               text: e instanceof Error ? e.message : 'Action failed',
@@ -147,7 +183,21 @@ export default function ExtensionsView({ onBack }: { onBack: () => void }): JSX.
                           })
                       }}
                     >
-                      {isInstalled ? 'Remove' : 'Install'}
+                      {installing[ext.id] !== undefined ? (
+                        <div className="relative h-4 w-4">
+                          <svg className="h-full w-full -rotate-90">
+                            <circle
+                              cx="8"
+                              cy="8"
+                              r="7"
+                              stroke="currentColor"
+                              strokeWidth="2"
+                              fill="transparent"
+                              strokeDasharray={`${(installing[ext.id]! / 100) * 44} 44`}
+                            />
+                          </svg>
+                        </div>
+                      ) : isInstalled ? 'Remove' : 'Install'}
                     </Button>
                   </div>
                 </li>

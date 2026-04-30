@@ -102,7 +102,6 @@ export default function App(): JSX.Element {
 
   useEffect(() => {
     const off = window.raymes.onWindowSnapGuides((payload) => {
-      console.log('[DEBUG:SnapGuides] Renderer received payload:', payload)
       setSnapGuides(payload)
     })
     return off
@@ -130,9 +129,7 @@ export default function App(): JSX.Element {
     }
 
     const endDrag = (): void => {
-      console.log('[DEBUG:SnapGuides] Renderer: mouseup/endDrag triggered')
       if (!dragActive) return
-      console.log('[DEBUG:SnapGuides] Renderer: sending endWindowSnapDrag IPC')
       dragActive = false
       void window.raymes.endWindowSnapDrag()
     }
@@ -183,6 +180,7 @@ export default function App(): JSX.Element {
   // from any sub-surface we pop back to `command`, and only from the
   // command surface does Escape actually hide the launcher. That
   // guarantee is the "back not close" contract users rely on.
+  // The global shortcut Cmd+Escape also hides the window from anywhere.
   //
   // On the command surface, `CommandBar` may still need Escape first
   // (pin picker, pending extension form). It registers a consumer via
@@ -258,7 +256,7 @@ export default function App(): JSX.Element {
       <div
         ref={contentRef}
         key={surface}
-        className="relative z-0 flex h-full w-full animate-raymes-fade-in flex-col"
+        className="no-drag relative z-0 flex h-full w-full animate-raymes-fade-in flex-col"
       >
         {surface === 'providers' ? (
           <ProvidersView onBack={() => setSurface('command')} />

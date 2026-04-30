@@ -103,6 +103,33 @@ export type ExtensionInvokeActionResult =
       message: string
     }
 
+export type ExtensionSearchTextChangedRequest = {
+  sessionId: string
+  searchText: string
+}
+
+export type ExtensionSearchTextChangedResult =
+  | {
+      ok: true
+      mode: 'no-view'
+      message: string
+    }
+  | {
+      ok: true
+      mode: 'view'
+      message?: string
+      sessionId: string
+      extensionId: string
+      commandName: string
+      title: string
+      root: ExtensionRuntimeNode
+      actions: ExtensionRuntimeAction[]
+    }
+  | {
+      ok: false
+      message: string
+    }
+
 export type ExtensionRuntimePreferencesRequest = {
   extensionId: string
   commandName?: string

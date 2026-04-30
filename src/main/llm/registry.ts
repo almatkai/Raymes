@@ -31,6 +31,8 @@ const DEFAULT_OLLAMA_BASE = 'http://localhost:11434'
 const DEFAULT_OLLAMA_MODEL = 'llama3.2'
 const DEFAULT_GEMINI_BASE = 'https://generativelanguage.googleapis.com/v1beta/openai'
 const DEFAULT_GEMINI_MODEL = 'gemini-2.0-flash'
+const DEFAULT_DEEPSEEK_BASE = 'https://api.deepseek.com'
+const DEFAULT_DEEPSEEK_MODEL = 'deepseek-v4-flash'
 
 function normalizeFromRaw(raw: Record<string, unknown>): OpenRayLLMConfig {
   const p = raw.provider
@@ -41,7 +43,8 @@ function normalizeFromRaw(raw: Record<string, unknown>): OpenRayLLMConfig {
     p === 'anthropic' ||
     p === 'ollama' ||
     p === 'copilot' ||
-    p === 'gemini'
+    p === 'gemini' ||
+    p === 'deepseek'
       ? p
       : hasCopilotToken
         ? 'copilot'
@@ -97,6 +100,13 @@ export function readLLMConfig(): OpenRayLLMConfig {
       model: n.model ?? DEFAULT_GEMINI_MODEL,
     }
   }
+  if (n.provider === 'deepseek') {
+    return {
+      ...n,
+      baseURL: n.baseURL ?? DEFAULT_DEEPSEEK_BASE,
+      model: n.model ?? DEFAULT_DEEPSEEK_MODEL,
+    }
+  }
   return n
 }
 
@@ -133,6 +143,12 @@ function buildProvider(cfg: OpenRayLLMConfig): LLMProvider {
         cfg.baseURL ?? DEFAULT_GEMINI_BASE,
         cfg.geminiApiKey ?? cfg.apiKey ?? '',
         cfg.model ?? DEFAULT_GEMINI_MODEL,
+      )
+    case 'deepseek':
+      return new OpenAIProvider(
+        cfg.baseURL ?? DEFAULT_DEEPSEEK_BASE,
+        cfg.apiKey ?? '',
+        cfg.model ?? DEFAULT_DEEPSEEK_MODEL,
       )
     default:
       return new OllamaProvider(DEFAULT_OLLAMA_BASE, DEFAULT_OLLAMA_MODEL)

@@ -1,4 +1,4 @@
-export type ProviderId = 'openai' | 'openai-compatible' | 'anthropic' | 'ollama' | 'copilot' | 'gemini' | 'opencode'
+export type ProviderId = 'openai' | 'openai-compatible' | 'anthropic' | 'ollama' | 'copilot' | 'gemini' | 'opencode' | 'deepseek'
 
 export type LlmTask = 'chat' | 'search' | 'action' | 'voice'
 

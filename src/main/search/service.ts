@@ -841,6 +841,11 @@ async function executeActionInner(action: SearchAction): Promise<SearchExecuteRe
       clipboard.writeText(action.text)
       // Give the window time to hide before firing the paste keystroke.
       await new Promise<void>((resolve) => setTimeout(resolve, 120))
+      // Deactivate the app so the previously frontmost application
+      // becomes active again — otherwise Cmd+V may be captured by the
+      // hidden Electron window instead of the target input field.
+      app.hide()
+      await new Promise<void>((resolve) => setTimeout(resolve, 50))
       await execFileAsync('osascript', [
         '-e',
         'tell application "System Events" to keystroke "v" using {command down}',

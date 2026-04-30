@@ -61,8 +61,6 @@ function sendWindowSnapGuides(
   }
 
   lastSnapPayload = { ...payload }
-  const randomId = Math.random().toString(36).substring(7)
-  console.log(`[DEBUG:SnapGuides] [${randomId}] Sending to renderer:`, payload)
   win.webContents.send('window:snap-guides', payload)
 }
 
@@ -114,11 +112,6 @@ function updateWindowSnapState(win: BrowserWindow): void {
   const screenCenterY = workArea.y + workArea.height / 2
   const dx = Math.abs(windowCenterX - screenCenterX)
   const dy = Math.abs(windowCenterY - screenCenterY)
-  
-  // Log distance occasionally to avoid spamming even more, but enough to see progress
-  if (Math.random() < 0.1) {
-    console.log(`[DEBUG:SnapGuides] Monitoring - distance to center: dx=${Math.round(dx)}, dy=${Math.round(dy)}`)
-  }
 
   const releaseThreshold = SNAP_THRESHOLD + UNSNAP_BUFFER
 
@@ -138,9 +131,6 @@ function updateWindowSnapState(win: BrowserWindow): void {
   const nearVerticalCenter = dx < SNAP_THRESHOLD
   const nearHorizontalCenter = dy < SNAP_THRESHOLD
   if (nearVerticalCenter && nearHorizontalCenter) {
-    if (!dragSnapLocked) {
-      console.log(`[DEBUG:SnapGuides] Snap detected! X:${bounds.x} Y:${bounds.y}`)
-    }
     dragSnapLocked = true
     snapWindowToCenter(win)
     sendWindowSnapGuides(win, { visible: true, active: true })
@@ -157,8 +147,6 @@ function startWindowDragMonitoring(win: BrowserWindow): void {
     dragFinalizeTimer = null
   }
   if (win.isDestroyed() || dragSessionActive) return
-  const sessionId = Math.random().toString(36).substring(7)
-  console.log(`[DEBUG:SnapGuides] [${sessionId}] startWindowDragMonitoring`)
   dragSessionActive = true
   dragSnapLocked = false
   sendWindowSnapGuides(win, { visible: true, active: false })
@@ -173,7 +161,6 @@ function startWindowDragMonitoring(win: BrowserWindow): void {
 
 function pauseWindowDragMonitoring(win: BrowserWindow): void {
   if (!dragSessionActive) return
-  console.log('[DEBUG:SnapGuides] pausing drag monitoring, waiting for release')
   dragSessionActive = false
   dragSnapLocked = false
   if (dragMonitorTimer !== null) {
@@ -195,7 +182,6 @@ function scheduleWindowDragFinalize(win: BrowserWindow): void {
   dragFinalizeTimer = setTimeout(() => {
     dragFinalizeTimer = null
     if (dragSessionActive || win.isDestroyed() || !isMouseDown) return
-    console.log('[DEBUG:SnapGuides] drag idle finalized, preserving held state')
     const [curX, curY] = win.getPosition()
     setPersistedWindowPosition({ x: curX, y: curY })
   }, 900)
@@ -208,19 +194,12 @@ function scheduleWindowDragRelease(win: BrowserWindow): void {
   dragReleaseTimer = setTimeout(() => {
     dragReleaseTimer = null
     if (!dragSessionActive || win.isDestroyed()) return
-    console.log('[DEBUG:SnapGuides] drag idle detected, pausing monitoring')
     pauseWindowDragMonitoring(win)
     scheduleWindowDragFinalize(win)
   }, 120)
 }
 
 function stopWindowDragMonitoring(win: BrowserWindow): void {
-  if (!dragSessionActive) {
-    console.log('[DEBUG:SnapGuides] stopWindowDragMonitoring called but dragSessionActive is false')
-    return
-  }
-  const stopId = Math.random().toString(36).substring(7)
-  console.log(`[DEBUG:SnapGuides] [${stopId}] stopWindowDragMonitoring - STOPPING`)
   dragSessionActive = false
   dragSnapLocked = false
   isMouseDown = false
@@ -246,14 +225,14 @@ function stopWindowDragMonitoring(win: BrowserWindow): void {
 
 function handleNativeWillMove(win: BrowserWindow): void {
   if (win.isDestroyed() || isProgrammaticMove) return
-  console.log('[DEBUG:SnapGuides] handleNativeWillMove')
+
   startWindowDragMonitoring(win)
   scheduleWindowDragRelease(win)
 }
 
 function handleNativeMove(win: BrowserWindow): void {
   if (win.isDestroyed() || isProgrammaticMove) return
-  console.log('[DEBUG:SnapGuides] handleNativeMove')
+
   // Keep drag session alive even when OS emits sparse move events.
   startWindowDragMonitoring(win)
   scheduleWindowDragRelease(win)
@@ -383,7 +362,6 @@ function isAltSpaceReleaseInput(input: Electron.Input): boolean {
 
 function isMouseReleaseInput(input: Electron.Input): boolean {
   const isUp = input.type === 'mouseUp'
-  if (isUp) console.log('[DEBUG:SnapGuides] isMouseReleaseInput: mouseUp detected')
   return isUp
 }
 
@@ -576,14 +554,13 @@ function createWindow(): void {
   // Native drag lifecycle for frameless windows is most reliable on macOS.
   // This avoids depending on renderer mouse events in `-webkit-app-region: drag`.
   mainWindow.on('will-move', () => {
-    console.log('[DEBUG:SnapGuides] will-move event')
     // will-move fires when the OS initiates a drag, so this is our best indicator
     // that a drag session is starting (even before mouseDown reaches main process)
     isMouseDown = true
     if (mainWindow) handleNativeWillMove(mainWindow)
   })
   mainWindow.on('move', () => {
-    console.log('[DEBUG:SnapGuides] move event, isMouseDown:', isMouseDown)
+
     if (mainWindow && dragSessionActive) {
       scheduleWindowDragRelease(mainWindow)
     }
@@ -591,15 +568,15 @@ function createWindow(): void {
   })
 
   mainWindow.on('moved', () => {
-    console.log('[DEBUG:SnapGuides] native window event: moved')
+
     if (dragSessionActive && mainWindow) {
-      console.log('[DEBUG:SnapGuides] moved event: refreshing release timer')
+
       scheduleWindowDragRelease(mainWindow)
     }
   })
 
   mainWindow.on('blur', () => {
-    console.log('[DEBUG:SnapGuides] native window event: blur')
+
     if (shouldSuppressBlurHide()) return
     stopWindowDragMonitoring(mainWindow!)
     hideCommandBar()
@@ -613,18 +590,7 @@ function createWindow(): void {
   })
 
   mainWindow.webContents.on('before-input-event', (_event, input) => {
-    if (input.type.startsWith('mouse')) {
-      console.log('[DEBUG:SnapGuides] before-input-event mouse event:', input.type)
-    }
-    if (input.type === 'mouseDown') {
-      console.log('[DEBUG:SnapGuides] before-input-event: mouseDown detected')
-      isMouseDown = true
-    }
-    if (input.type === 'mouseUp') {
-      console.log('[DEBUG:SnapGuides] before-input-event: mouseUp detected')
-    }
     if (mainWindow && isMouseReleaseInput(input)) {
-      console.log('[DEBUG:SnapGuides] before-input-event: mouseUp detected (calling stop)')
       // Reliable release hook for frameless drag regions: finalize drag state,
       // persist last coordinates, and hide overlay immediately on mouse-up.
       stopWindowDragMonitoring(mainWindow)
@@ -637,9 +603,7 @@ function createWindow(): void {
   // Reliable release hook for frameless drag regions: finalize drag state,
   // persist last coordinates, and hide overlay immediately on mouse-up.
   mainWindow.webContents.on('cursor-changed', (_event, type) => {
-    console.log('[DEBUG:SnapGuides] cursor-changed event:', type)
     if (type === 'default' && dragSessionActive && mainWindow) {
-      console.log('[DEBUG:SnapGuides] cursor-changed: default detected during active drag (calling stop)')
       stopWindowDragMonitoring(mainWindow)
     }
   })
@@ -659,6 +623,10 @@ function registerHotkey(): void {
     showCommandBar()
     mainWindow.webContents.send('notes:quick-save-shortcut')
   })
+  const okEscape = globalShortcut.register('CommandOrControl+Escape', () => {
+    if (!mainWindow || mainWindow.isDestroyed() || !commandBarVisible) return
+    hideCommandBar()
+  })
 
   if (!okSpace) {
     console.warn('Failed to register global shortcut Alt+Space')
@@ -668,6 +636,9 @@ function registerHotkey(): void {
   }
   if (!okNote) {
     console.warn('Failed to register global shortcut CommandOrControl+N (quick note)')
+  }
+  if (!okEscape) {
+    console.warn('Failed to register global shortcut CommandOrControl+Escape (close window)')
   }
 }
 

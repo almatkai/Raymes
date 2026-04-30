@@ -50,6 +50,7 @@ import {
   uninstallExtension,
 } from './extensions/service'
 import {
+  extensionRegistryEvents,
   getExtensionPreferences,
   installRegistryExtension,
   listInstalledRegistryExtensions,
@@ -186,6 +187,13 @@ export function registerIpcHandlers(
   getWindow: () => BrowserWindow | null,
   controls?: DragMonitorControls,
 ): void {
+  extensionRegistryEvents.on('progress', (payload) => {
+    const win = getWindow()
+    if (win && !win.isDestroyed()) {
+      win.webContents.send('extension:install-progress', payload)
+    }
+  })
+
   ipcMain.handle('llm-config-get', async () => ({
     ...LLM_DEFAULTS,
     ...readLLMConfig(),
@@ -665,6 +673,27 @@ export function registerIpcHandlers(
     })
   })
 
+  ipcMain.handle('extension:search-text-changed', async (_event, payload: unknown) => {
+    if (!payload || typeof payload !== 'object') {
+      throw new Error('Invalid extension search payload')
+    }
+
+    const body = payload as {
+      sessionId?: unknown
+      searchText?: unknown
+    }
+
+    if (typeof body.sessionId !== 'string' || typeof body.searchText !== 'string') {
+      throw new Error('sessionId and searchText are required')
+    }
+
+    const { updateSearchText } = await import('./extension-runner')
+    return updateSearchText({
+      sessionId: body.sessionId,
+      searchText: body.searchText,
+    })
+  })
+
   ipcMain.handle('clipboard:read', async () => {
     return clipboard.readText()
   })
@@ -825,7 +854,6 @@ export function registerIpcHandlers(
   })
 
   ipcMain.handle('window:snap-drag-end', async () => {
-    console.log('[DEBUG:SnapGuides] IPC: window:snap-drag-end received')
     const win = getWindow()
     if (!win || win.isDestroyed()) return
     controls?.stopWindowDragMonitoring(win)

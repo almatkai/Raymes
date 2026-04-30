@@ -38,6 +38,10 @@ contextBridge.exposeInMainWorld('raymes', {
     actionId: string
     formValues?: Record<string, string>
   }) => ipcRenderer.invoke('extension:invoke-action', payload),
+  extensionSearchTextChanged: (payload: {
+    sessionId: string
+    searchText: string
+  }) => ipcRenderer.invoke('extension:search-text-changed', payload),
   clipboardReadText: () => ipcRenderer.invoke('clipboard:read'),
   clipboardWriteText: (text: string) => ipcRenderer.invoke('clipboard:write', text),
   shellOpen: (target: string) => ipcRenderer.invoke('shell:open', target),
@@ -195,6 +199,17 @@ contextBridge.exposeInMainWorld('raymes', {
     ipcRenderer.on(AGENT_IPC.EVENT, handler)
     return (): void => {
       ipcRenderer.removeListener(AGENT_IPC.EVENT, handler)
+    }
+  },
+  onExtensionInstallProgress: (listener: (payload: { id: string; progress: number }) => void) => {
+    const handler = (_event: IpcRendererEvent, payload: { id: string; progress: number }): void => {
+      if (payload && typeof payload.id === 'string' && typeof payload.progress === 'number') {
+        listener(payload)
+      }
+    }
+    ipcRenderer.on('extension:install-progress', handler)
+    return (): void => {
+      ipcRenderer.removeListener('extension:install-progress', handler)
     }
   },
   chatList: (limit?: number) => ipcRenderer.invoke(CHAT_IPC.LIST, limit),

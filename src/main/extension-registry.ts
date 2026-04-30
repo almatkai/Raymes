@@ -1,4 +1,5 @@
-import { app } from 'electron'
+import { app, ipcMain } from 'electron'
+import { EventEmitter } from 'node:events'
 import { execFile } from 'node:child_process'
 import {
   cpSync,
@@ -11,7 +12,7 @@ import {
   writeFileSync,
 } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { dirname, join } from 'node:path'
+import { basename, dirname, join } from 'node:path'
 import { promisify } from 'node:util'
 import type {
   ExtensionRegistryCommand,
@@ -19,6 +20,8 @@ import type {
 } from '../shared/extensionRuntime'
 import type { ExtensionManifest } from '../shared/extensions'
 import { listInstalledExtensions as listLegacyInstalled, searchStoreExtensions } from './extensions/service'
+
+export const extensionRegistryEvents = new EventEmitter()
 
 const execFileAsync = promisify(execFile)
 
@@ -195,9 +198,19 @@ async function runNpmInstall(extensionPath: string): Promise<void> {
     throw new Error('npm is required to install extension dependencies but was not found')
   }
 
+  const executableName = basename(npm).toLowerCase()
+  const normalizedPath = npm.toLowerCase()
+  const isPnpm = executableName.includes('pnpm') || normalizedPath.includes('/pnpm/')
+  const isYarn = executableName.includes('yarn') || normalizedPath.includes('/yarn/')
+  const installArgs = isPnpm
+    ? ['install', '--config.strict-peer-dependencies=false']
+    : isYarn
+      ? ['install']
+      : ['install', '--legacy-peer-deps', '--no-audit', '--no-fund']
+
   await execFileAsync(
     npm,
-    ['install', '--legacy-peer-deps', '--no-audit', '--no-fund'],
+    installArgs,
     {
       cwd: extensionPath,
       timeout: 300_000,
@@ -418,7 +431,7 @@ export function listInstalledRegistryExtensions(): InstalledRegistryExtension[] 
         return null
       }
     })
-    .filter((entry): entry is InstalledRegistryExtension => entry !== null) as InstalledRegistryExtension[]
+    .filter((entry) => entry !== null) as InstalledRegistryExtension[]
 
   return [...fromDb, ...bridgedLegacy].sort((a, b) => a.name.localeCompare(b.name))
 }
@@ -481,11 +494,14 @@ export async function installRegistryExtension(extensionIdOrSlug: string): Promi
       cpSync(installPath, backupPath, { recursive: true })
     }
 
+    extensionRegistryEvents.emit('progress', { id, progress: 20 })
     await cloneExtensionSource(slug, installPath)
+    extensionRegistryEvents.emit('progress', { id, progress: 60 })
 
     if (hasThirdPartyDependencies(id)) {
       await runNpmInstall(installPath)
     }
+    extensionRegistryEvents.emit('progress', { id, progress: 90 })
 
     const next = extensionFromManifest(id, Date.now())
     const rest = db.installed.filter((entry) => entry.id !== id)
@@ -493,6 +509,7 @@ export async function installRegistryExtension(extensionIdOrSlug: string): Promi
       installed: [...rest, next],
     }
     writeRegistryDb(nextDb)
+    extensionRegistryEvents.emit('progress', { id, progress: 100 })
     return next
   } catch (error) {
     if (hadExisting && existsSync(backupPath)) {

@@ -25,12 +25,14 @@ import {
 } from './hooks'
 
 export type ExtensionRuntimeSurfaceProps = {
+  sessionId: string
   title: string
   extensionId: string
   commandName: string
   root: ExtensionRuntimeNode
   actions: ExtensionRuntimeAction[]
   onBack: () => void
+  onSearchTextChanged: (searchText: string) => Promise<void> | void
   onInvokeAction: (actionId: string, formValues?: Record<string, string>) => Promise<void> | void
 }
 
@@ -42,7 +44,7 @@ function rootKind(root: ExtensionRuntimeNode): 'list' | 'form' | 'grid' | 'detai
 }
 
 export function ExtensionRuntimeSurface(props: ExtensionRuntimeSurfaceProps): JSX.Element {
-  const { title, extensionId, commandName, root, actions, onBack, onInvokeAction } = props
+  const { title, extensionId, commandName, root, actions, onBack, onSearchTextChanged, onInvokeAction } = props
   const [showActions, setShowActions] = useState(false)
 
   useEffect(() => {
@@ -136,6 +138,7 @@ export function ExtensionRuntimeSurface(props: ExtensionRuntimeSurfaceProps): JS
               onBack={onBack}
               onRunPrimaryAction={onRunPrimaryAction}
               onOpenActions={() => setShowActions(true)}
+              onSearchTextChanged={onSearchTextChanged}
             />
           )}
 

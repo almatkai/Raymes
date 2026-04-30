@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import type { LlmConfigRecord, ProviderId } from '../shared/llmConfig'
 import type { ProviderConnectionStatuses } from '../preload/api'
+import type { SelectFieldProps, TextAreaProps, TextFieldProps } from './ui/primitives'
 import {
   Button,
   FieldLabel,
@@ -8,6 +9,7 @@ import {
   HintBar,
   Kbd,
   Message,
+  SelectField,
   StatusDots,
   TextArea,
   TextField,
@@ -17,6 +19,7 @@ import { GlideList } from './ui/GlideList'
 
 const ROWS: { id: ProviderId; title: string; subtitle: string }[] = [
   { id: 'openai', title: 'OpenAI', subtitle: 'Chat Completions API or compatible' },
+  { id: 'deepseek', title: 'DeepSeek', subtitle: 'DeepSeek-V4, V3, and R1 via the official API' },
   { id: 'openai-compatible', title: 'OpenAI Compatible', subtitle: 'Any endpoint that speaks OpenAI Chat API' },
   { id: 'gemini', title: 'Gemini', subtitle: 'Google Gemini via OpenAI-compatible endpoint' },
   { id: 'anthropic', title: 'Anthropic', subtitle: 'Claude via the official API' },
@@ -27,6 +30,7 @@ const ROWS: { id: ProviderId; title: string; subtitle: string }[] = [
 
 const DEFAULT_MODEL: Record<ProviderId, string> = {
   openai: 'gpt-4o-mini',
+  deepseek: 'deepseek-v4-flash',
   'openai-compatible': 'gpt-4o-mini',
   gemini: 'gemini-2.0-flash',
   anthropic: 'claude-3-5-haiku-20241022',
@@ -87,6 +91,11 @@ function ProviderDetail({ id, cfg, connected, onBack, onReload }: DetailProps): 
     if (id === 'openai' || id === 'anthropic') {
       patch.apiKey = apiKey
       if (baseURL.trim()) patch.baseURL = baseURL.trim()
+      patch.model = model.trim() || DEFAULT_MODEL[id]
+    }
+    if (id === 'deepseek') {
+      patch.apiKey = apiKey
+      patch.baseURL = baseURL.trim() || 'https://api.deepseek.com'
       patch.model = model.trim() || DEFAULT_MODEL[id]
     }
     if (id === 'openai-compatible') {
@@ -194,7 +203,7 @@ function ProviderDetail({ id, cfg, connected, onBack, onReload }: DetailProps): 
         />
       </div>
       <div className="glass-card min-h-0 flex-1 overflow-y-auto px-4 py-3 pr-[calc(0.5rem+2px)] animate-raymes-scale-in">
-        {id === 'openai' || id === 'anthropic' || id === 'openai-compatible' || id === 'gemini' ? (
+        {id === 'openai' || id === 'anthropic' || id === 'openai-compatible' || id === 'gemini' || id === 'deepseek' ? (
           <div className="space-y-3">
             <div>
               <FieldLabel>API key</FieldLabel>
@@ -210,7 +219,9 @@ function ProviderDetail({ id, cfg, connected, onBack, onReload }: DetailProps): 
                       ? 'sk-ant-…'
                       : id === 'gemini'
                         ? 'AIza…'
-                        : 'provider key'
+                        : id === 'deepseek'
+                          ? 'sk-…'
+                          : 'provider key'
                 }
               />
             </div>
@@ -226,7 +237,9 @@ function ProviderDetail({ id, cfg, connected, onBack, onReload }: DetailProps): 
                       ? 'https://api.anthropic.com'
                       : id === 'gemini'
                         ? 'https://generativelanguage.googleapis.com/v1beta/openai'
-                        : 'https://api.openai.com/v1'
+                        : id === 'deepseek'
+                          ? 'https://api.deepseek.com'
+                          : 'https://api.openai.com/v1'
                 }
               />
             </div>
@@ -368,6 +381,35 @@ function ModelPicker({
   modelsLoading: boolean
   onRefresh: () => void
 }): JSX.Element {
+  if (id === 'deepseek') {
+    const options = [
+      { id: 'deepseek-v4-flash', label: 'DeepSeek-V4 Flash' },
+      { id: 'deepseek-v4-pro', label: 'DeepSeek-V4 Pro' },
+      { id: 'deepseek-chat', label: 'DeepSeek Chat (deprecated)' },
+      { id: 'deepseek-reasoner', label: 'DeepSeek Reasoner (deprecated)' },
+    ]
+
+    return (
+      <div>
+        <FieldLabel>Model</FieldLabel>
+        <SelectField value={model} onChange={(e) => setModel(e.target.value)}>
+          {options.map((opt) => (
+            <option key={opt.id} value={opt.id}>
+              {opt.label}
+            </option>
+          ))}
+          {modelOptions
+            .filter((m) => !options.some((o) => o.id === m))
+            .map((m) => (
+              <option key={m} value={m}>
+                {m}
+              </option>
+            ))}
+        </SelectField>
+      </div>
+    )
+  }
+
   return (
     <div>
       <div className="flex items-baseline justify-between">
@@ -403,6 +445,7 @@ export default function ProvidersView({ onBack }: { onBack: () => void }): JSX.E
   const [cfg, setCfg] = useState<LlmConfigRecord>({})
   const [statuses, setStatuses] = useState<ProviderConnectionStatuses>({
     openai: false,
+    deepseek: false,
     'openai-compatible': false,
     gemini: false,
     anthropic: false,
