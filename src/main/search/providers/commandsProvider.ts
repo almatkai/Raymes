@@ -30,10 +30,17 @@ function buildRaymesSurfaceDocuments(): IndexedDocument[] {
       commandId: 'open-settings',
     },
     {
-      id: 'command:open-extensions',
-      title: 'Open Extensions',
-      subtitle: 'Tezbar extensions',
+      id: 'command:open-extensions-settings',
+      title: 'Extensions',
+      subtitle: 'Settings · Extensions tab',
       keywords: ['extensions', 'raycast', '/extensions'],
+      commandId: 'open-extensions-settings',
+    },
+    {
+      id: 'command:open-extensions',
+      title: 'Extensions Store',
+      subtitle: 'Browse and install extensions',
+      keywords: ['store', 'extension store', 'extensions store', 'raycast store', '/store'],
       commandId: 'open-extensions',
     },
     {

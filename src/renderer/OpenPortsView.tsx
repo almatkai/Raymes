@@ -14,6 +14,42 @@ import { GlideList } from './ui/GlideList'
 
 type Panel = 'listen' | 'named'
 
+function ProcessIcon({ row }: { row: OpenPortProcess }): JSX.Element {
+  return (
+    <span
+      aria-hidden
+      className={
+        row.iconDataUrl
+          ? 'relative grid h-7 w-7 shrink-0 place-items-center'
+          : 'grid h-7 w-7 shrink-0 place-items-center rounded-[7px] border border-white/10 bg-white/[0.04] text-ink-3'
+      }
+    >
+      {row.iconDataUrl ? (
+        <img
+          src={row.iconDataUrl}
+          alt=""
+          className="h-full w-full object-contain"
+          draggable={false}
+        />
+      ) : (
+        <svg
+          width="16"
+          height="16"
+          viewBox="0 0 14 14"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="1.15"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+        >
+          <rect x="1.75" y="2.25" width="10.5" height="9.5" rx="1.5" />
+          <path d="m4 5 2 2-2 2M7.5 9h2.5" />
+        </svg>
+      )}
+    </span>
+  )
+}
+
 export default function OpenPortsView({
   onBack,
   initialTab = 'listen',
@@ -252,13 +288,16 @@ export default function OpenPortsView({
                       className="flex items-center justify-between gap-3 rounded-tezbar-row px-3 py-2.5 transition"
                       onMouseEnter={() => setSelected(i)}
                     >
-                      <div className="min-w-0">
-                        <p className="truncate text-[13px] font-medium text-ink-1">{row.process}</p>
-                        <p className="mt-0.5 truncate text-[11px] text-ink-3">
-                          <span className="text-ink-4">{row.user}</span>
-                          <span className="mx-1.5 text-ink-4">·</span>
-                          <span className="font-mono tabular-nums text-ink-3">PID {row.pid}</span>
-                        </p>
+                      <div className="flex min-w-0 items-center gap-3">
+                        <ProcessIcon row={row} />
+                        <div className="min-w-0">
+                          <p className="truncate text-[13px] font-medium text-ink-1">{row.process}</p>
+                          <p className="mt-0.5 truncate text-[11px] text-ink-3">
+                            <span className="text-ink-4">{row.user}</span>
+                            <span className="mx-1.5 text-ink-4">·</span>
+                            <span className="font-mono tabular-nums text-ink-3">PID {row.pid}</span>
+                          </p>
+                        </div>
                       </div>
                       <div className="flex flex-wrap justify-end gap-1">
                         {row.ports.map((port) => {

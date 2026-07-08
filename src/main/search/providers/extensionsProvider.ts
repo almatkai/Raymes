@@ -1,4 +1,5 @@
 import { listInstalledRegistryExtensions } from '../../extension-registry'
+import { getCommandAliases, getDisabledCommands } from '../../llm/configStore'
 import type { IndexedDocument, SearchProvider } from './types'
 
 export const extensionsProvider: SearchProvider = {
@@ -7,15 +8,24 @@ export const extensionsProvider: SearchProvider = {
     const installed = listInstalledRegistryExtensions()
     if (installed.length === 0) return []
 
+    const disabled = getDisabledCommands()
+    const aliases = getCommandAliases()
     const out: IndexedDocument[] = []
     for (const ext of installed.slice(0, 100)) {
       for (const cmd of ext.commands) {
+        const commandId = `extcmd:${ext.id}:${cmd.name}`
+        if (disabled[commandId]) continue
+
+        let tokens = `${cmd.title} ${cmd.name} ${ext.name} ${ext.slug} ${ext.id} ${ext.description || ''}`
+        const alias = aliases[commandId]
+        if (alias) tokens += ` ${alias}`
+
         out.push({
-          id: `extcmd:${ext.id}:${cmd.name}`,
+          id: commandId,
           category: 'extensions',
           title: cmd.title,
           subtitle: ext.name,
-          tokens: `${cmd.title} ${cmd.name} ${ext.name} ${ext.slug} ${ext.id} ${ext.description || ''}`,
+          tokens,
           action: {
             type: 'run-extension-command',
             extensionId: ext.id,

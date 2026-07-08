@@ -1281,25 +1281,80 @@ export function resolveInstalledPackageJsonPath(extensionId: string): string | n
   return fs.existsSync(pkgPath) ? pkgPath : null;
 }
 
+function searchTokens(value: string): string[] {
+  return String(value || '')
+    .toLowerCase()
+    .split(/[^a-z0-9]+/g)
+    .filter(Boolean);
+}
+
+function tokenScore(tokens: string[], query: string, exactScore: number, prefixScore: number): number {
+  if (tokens.some((token) => token === query)) return exactScore;
+  if (tokens.some((token) => token.startsWith(query))) return prefixScore;
+  return 0;
+}
+
+export function scoreCatalogEntrySearch(entry: CatalogEntry, query: string): number {
+  const q = String(query || '').trim().toLowerCase();
+  if (!q) return 1;
+
+  const name = String(entry.name || '').toLowerCase();
+  const title = String(entry.title || '').toLowerCase();
+  const author = String(entry.author || '').toLowerCase();
+  const categories = entry.categories || [];
+  const commands = entry.commands || [];
+
+  const titleTokens = searchTokens(entry.title);
+  const nameTokens = searchTokens(entry.name);
+  const authorTokens = searchTokens(author);
+  const categoryTokens = searchTokens(categories.join(' '));
+  const commandTokens = searchTokens(
+    commands.map((command) => `${command.name} ${command.title}`).join(' '),
+  );
+  const descriptionTokens = searchTokens(entry.description);
+
+  let score = 0;
+
+  if (name === q || title === q) score += 10000;
+  if (name.startsWith(q) || title.startsWith(q)) score += 9000;
+  score += tokenScore(nameTokens, q, 8200, 7200);
+  score += tokenScore(titleTokens, q, 8000, 7000);
+  score += tokenScore(categoryTokens, q, 3000, 2200);
+  score += tokenScore(authorTokens, q, 2200, 1600);
+  score += tokenScore(commandTokens, q, 1800, 1200);
+  score += tokenScore(descriptionTokens, q, 900, 550);
+
+  // Longer queries can safely use substring matching for forgiving search.
+  // Short queries like "arc" must not match unrelated words such as "search".
+  if (q.length >= 4) {
+    if (name.includes(q) || title.includes(q)) score += 1400;
+    if (entry.description.toLowerCase().includes(q)) score += 350;
+  }
+
+  if (score > 0 && entry.installCount && entry.installCount > 0) {
+    score += Math.min(500, Math.log10(entry.installCount) * 80);
+  }
+
+  return score;
+}
+
 export async function searchExtensionCatalog(query: string): Promise<ExtensionManifest[]> {
   const q = String(query || '').trim().toLowerCase();
   const catalog = await getCatalog(false);
   return catalog
-    .filter((entry) => {
-      if (!q) return true;
-      return [
-        entry.name,
-        entry.title,
-        entry.description,
-        entry.author,
-        ...(entry.categories || []),
-      ]
-        .join(' ')
-        .toLowerCase()
-        .includes(q);
+    .map((entry) => {
+      return { entry, score: scoreCatalogEntrySearch(entry, q) };
+    })
+    .filter(({ score }) => score > 0)
+    .sort((a, b) => {
+      return (
+        b.score - a.score ||
+        (b.entry.installCount ?? 0) - (a.entry.installCount ?? 0) ||
+        a.entry.title.localeCompare(b.entry.title)
+      );
     })
     .slice(0, 200)
-    .map((entry) => ({
+    .map(({ entry }) => ({
       id: normalizeRaymesExtensionId(entry.name),
       name: entry.title || extensionNameFromSlug(entry.name),
       description: entry.description || '',

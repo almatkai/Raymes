@@ -94,6 +94,7 @@ export type OpenPortProcess = {
   user: string
   pid: string
   ports: number[]
+  iconDataUrl?: string
 }
 
 export type SearchBenchmarkReport = {

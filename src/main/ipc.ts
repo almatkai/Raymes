@@ -54,7 +54,14 @@ import {
   readRawConfig,
   setSafetyDryRun,
   writeConfigPatch,
+  getCommandHotkeys,
+  setCommandHotkeys,
+  getCommandAliases,
+  setCommandAliases,
+  getDisabledCommands,
+  setDisabledCommands,
 } from './llm/configStore'
+import { getInstalledExtensionsSettingsSchema } from './extension-builder'
 import {
   clearDeviceSession,
   persistCopilotTokens,
@@ -103,6 +110,7 @@ import {
   executeSearchAction,
   completePath,
   recordDirectoryVisit,
+  recordSearchActionUsage,
   getSearchBenchmarkHistory,
   listOpenPorts,
   reindexExtensions,
@@ -258,6 +266,11 @@ type IpcControls = {
     accelerator: string
     error?: string
   }
+  updateCommandHotkey?: (commandId: string, hotkey: string) => {
+    ok: boolean
+    error?: string
+  }
+  openAppSurface?: (surface: any) => void
 }
 
 function sendAgentEvent(sender: Electron.WebContents, event: AgentRunEvent): void {
@@ -868,16 +881,13 @@ export function registerIpcHandlers(
   })
 
   ipcMain.handle('github-device-start', async (_event, clientId: unknown) => {
-    if (typeof clientId !== 'string' || !clientId.trim()) {
-      throw new Error('GitHub OAuth Client ID is required for device sign-in.')
-    }
-    return startGithubDeviceFlow(clientId.trim())
+    return startGithubDeviceFlow(typeof clientId === 'string' ? clientId : undefined)
   })
 
   ipcMain.handle('github-device-poll', async () => {
     const r = await pollGithubDeviceFlow()
     if (r.status === 'success') {
-      persistCopilotTokens(r.access_token, r.refresh_token, r.expires_in)
+      persistCopilotTokens(r.access_token, r.refresh_token, r.expires_in, r.client_id)
       invalidateProviderCache()
     }
     return r
@@ -1369,6 +1379,54 @@ export function registerIpcHandlers(
     return saveRegistryExtensionPreferences(body.extensionId, values, commandName)
   })
 
+  ipcMain.handle('get-installed-extensions-settings-schema', async () => {
+    return getInstalledExtensionsSettingsSchema()
+  })
+
+  ipcMain.handle('toggle-command-enabled', async (_event, commandId: string, enabled: boolean) => {
+    const disabled = { ...getDisabledCommands() }
+    if (enabled) {
+      delete disabled[commandId]
+    } else {
+      disabled[commandId] = true
+    }
+    setDisabledCommands(disabled)
+    await reindexExtensions()
+    return true
+  })
+
+  ipcMain.handle('update-command-hotkey', async (_event, commandId: string, hotkey: string) => {
+    if (controls?.updateCommandHotkey) {
+      return controls.updateCommandHotkey(commandId, hotkey)
+    }
+    return { ok: false, error: 'Controls not initialized' }
+  })
+
+  ipcMain.handle('get-settings', async () => {
+    return {
+      commandHotkeys: getCommandHotkeys(),
+      commandAliases: getCommandAliases(),
+      disabledCommands: getDisabledCommands(),
+    }
+  })
+
+  ipcMain.handle('save-settings', async (_event, patch: unknown) => {
+    if (!patch || typeof patch !== 'object') return {}
+    const body = patch as { commandAliases?: Record<string, string> }
+    if (body.commandAliases) {
+      setCommandAliases(body.commandAliases)
+    }
+    await reindexExtensions()
+    return { ok: true }
+  })
+
+  ipcMain.handle('app:open-extensions', async () => {
+    if (controls?.openAppSurface) {
+      controls.openAppSurface('extensions')
+    }
+    return true
+  })
+
   ipcMain.handle(IPC_CHANNELS.SEARCH_ALL, async (_event, query: unknown) => {
     const q = typeof query === 'string' ? query : ''
     return searchEverything(q)
@@ -1427,6 +1485,11 @@ export function registerIpcHandlers(
       }
       return executeSearchAction(payload as SearchAction)
     }
+  })
+
+  ipcMain.handle(IPC_CHANNELS.SEARCH_RECORD_USAGE, async (_event, payload: unknown) => {
+    const request = parseSearchExecuteRequest(payload)
+    await recordSearchActionUsage(request.action, request.context)
   })
 
   ipcMain.handle(IPC_CHANNELS.AI_ACTION, async (_event, payload: unknown) => {

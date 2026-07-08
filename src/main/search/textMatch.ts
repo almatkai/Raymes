@@ -25,6 +25,12 @@ export function lexicalScore(text: string, query: string): number {
   return matched / tokens.length / 1.5
 }
 
+function searchableTokens(text: string): string[] {
+  return text
+    .toLowerCase()
+    .match(/[a-z0-9]+/g) ?? []
+}
+
 export function levenshteinDistance(left: string, right: string): number {
   if (left === right) return 0
   if (!left) return right.length
@@ -47,6 +53,41 @@ export function levenshteinDistance(left: string, right: string): number {
   }
 
   return prev[b.length]
+}
+
+function tokenSimilarity(candidate: string, query: string): number {
+  if (!candidate || !query) return 0
+  if (candidate === query) return 1
+  if (candidate.startsWith(query)) return 0.92
+  if (query.startsWith(candidate) && candidate.length >= 3) return 0.82
+  if (candidate.includes(query) || query.includes(candidate)) return 0.74
+
+  const distance = levenshteinDistance(candidate, query)
+  const length = Math.max(candidate.length, query.length)
+  const maxDistance = Math.max(1, Math.floor(length * 0.38))
+  if (distance > maxDistance) return 0
+
+  return Math.max(0, 1 - distance / length)
+}
+
+export function fuzzySimilarityScore(text: string, query: string): number {
+  const queryTokens = searchableTokens(query)
+  if (queryTokens.length === 0) return 0
+
+  const candidateTokens = searchableTokens(text)
+  if (candidateTokens.length === 0) return 0
+
+  let total = 0
+  for (const queryToken of queryTokens) {
+    let best = 0
+    for (const candidateToken of candidateTokens) {
+      best = Math.max(best, tokenSimilarity(candidateToken, queryToken))
+    }
+    total += best
+  }
+
+  const average = total / queryTokens.length
+  return average >= 0.45 ? average : 0
 }
 
 export function buildFtsQuery(query: string): string {

@@ -28,7 +28,9 @@ type RuntimeViewState = {
   message?: string
 }
 
-function fromRunResult(result: Extract<ExtensionRunCommandResult, { ok: true; mode: 'view' }>): RuntimeViewState {
+function fromRunResult(
+  result: Extract<ExtensionRunCommandResult, { ok: true; mode: 'view' }>
+): RuntimeViewState {
   return {
     sessionId: result.sessionId,
     extensionId: result.extensionId,
@@ -54,20 +56,29 @@ function PreferenceSetupView({
   onSaved: (next: Extract<ExtensionRunCommandResult, { ok: true; mode: 'view' }>) => void
 }): JSX.Element {
   const props = root.props ?? {}
-  const preferences = Array.isArray(props.preferences) ? props.preferences as PreferenceField[] : []
-  const values = props.values && typeof props.values === 'object' ? props.values as Record<string, unknown> : {}
+  const preferences = Array.isArray(props.preferences)
+    ? (props.preferences as PreferenceField[])
+    : []
+  const values =
+    props.values && typeof props.values === 'object'
+      ? (props.values as Record<string, unknown>)
+      : {}
   const extensionId = typeof props.extensionId === 'string' ? props.extensionId : ''
   const commandName = typeof props.commandName === 'string' ? props.commandName : ''
   const title = typeof props.title === 'string' ? props.title : 'Extension'
   const iconPath = typeof props.iconPath === 'string' ? props.iconPath : ''
   const includeApiKey = props.includeApiKey === true
+  const hasFields = includeApiKey || preferences.length > 0
 
-  const initialValues = preferences.reduce<Record<string, string>>((acc, pref) => {
-    if (!pref.name) return acc
-    const value = values[pref.name] ?? pref.default ?? ''
-    acc[pref.name] = typeof value === 'boolean' ? String(value) : String(value ?? '')
-    return acc
-  }, includeApiKey ? { apiKey: String(values.apiKey ?? '') } : {})
+  const initialValues = preferences.reduce<Record<string, string>>(
+    (acc, pref) => {
+      if (!pref.name) return acc
+      const value = values[pref.name] ?? pref.default ?? ''
+      acc[pref.name] = typeof value === 'boolean' ? String(value) : String(value ?? '')
+      return acc
+    },
+    includeApiKey ? { apiKey: String(values.apiKey ?? '') } : {}
+  )
   const [formValues, setFormValues] = useState<Record<string, string>>(initialValues)
   const [saving, setSaving] = useState(false)
   const [localError, setLocalError] = useState<string | null>(null)
@@ -76,8 +87,19 @@ function PreferenceSetupView({
     setFormValues((prev) => ({ ...prev, [key]: value }))
   }
 
-  const primaryPreferences = preferences.filter((pref) => pref.name === 'lang1' || pref.name === 'lang2')
-  const secondaryPreferences = preferences.filter((pref) => pref.name !== 'lang1' && pref.name !== 'lang2')
+  const primaryPreferences = preferences.filter(
+    (pref) => pref.name === 'lang1' || pref.name === 'lang2'
+  )
+  const secondaryPreferences = preferences.filter(
+    (pref) => pref.name !== 'lang1' && pref.name !== 'lang2'
+  )
+
+  const fieldRowClass = 'grid items-start gap-2 sm:grid-cols-[112px_minmax(0,1fr)] sm:gap-4'
+  const fieldLabelClass =
+    'pt-2.5 text-left text-[11px] font-semibold leading-5 text-ink-3 sm:text-right'
+  const fieldControlClass =
+    'h-8 w-full rounded-[9px] border border-white/75 bg-white/[0.025] px-2.5 text-[13px] text-ink-1 outline-none transition placeholder:text-ink-4 focus:border-accent-strong focus:bg-white/[0.045] focus:shadow-[0_0_0_2px_rgba(139,141,247,0.18)]'
+  const fieldHintClass = 'mt-1.5 block text-[10.5px] leading-4 text-ink-4'
 
   const renderPreference = (pref: PreferenceField): JSX.Element | null => {
     const name = pref.name
@@ -87,57 +109,72 @@ function PreferenceSetupView({
 
     if (pref.type === 'checkbox') {
       return (
-        <label key={name} className="group flex items-center justify-between gap-4 rounded-[14px] border border-white/10 bg-white/[0.045] px-4 py-3 transition hover:border-white/18 hover:bg-white/[0.07]">
-          <span className="min-w-0">
-            <span className="block text-[13px] font-semibold text-ink-1">{label}</span>
-            {pref.description ? <span className="mt-0.5 block text-[11px] text-ink-4">{pref.description}</span> : null}
-          </span>
-          <input
-            type="checkbox"
-            checked={value === 'true'}
-            onChange={(event) => setValue(name, event.target.checked ? 'true' : 'false')}
-            className="h-4 w-4 accent-accent-1"
-          />
-        </label>
+        <div key={name} className={fieldRowClass}>
+          <div className={fieldLabelClass}>{label}</div>
+          <label className="flex min-h-8 items-center gap-2 text-[12px] font-semibold text-ink-2">
+            <input
+              type="checkbox"
+              checked={value === 'true'}
+              onChange={(event) => setValue(name, event.target.checked ? 'true' : 'false')}
+              className="h-[13px] w-[13px] rounded-[3px] accent-accent"
+            />
+            <span className="min-w-0">
+              {pref.description || `Enable ${label.toLowerCase()}`}
+              {pref.required ? (
+                <span className="ml-2 text-[9px] uppercase tracking-[0.14em] text-accent-strong">
+                  Required
+                </span>
+              ) : null}
+            </span>
+          </label>
+        </div>
       )
     }
 
     if (pref.type === 'dropdown') {
       return (
-        <label key={name} className="block">
-          <span className="mb-2 flex items-center justify-between gap-3 text-[12px] font-semibold text-ink-3">
-            <span>{label}</span>
-            {pref.required ? <span className="text-[10px] uppercase tracking-[0.16em] text-accent-1">Required</span> : null}
+        <label key={name} className={fieldRowClass}>
+          <span className={fieldLabelClass}>
+            {label}
+            {pref.required ? <span className="ml-1 text-accent-strong">*</span> : null}
           </span>
-          <select
-            value={value}
-            onChange={(event) => setValue(name, event.target.value)}
-            className="h-12 w-full rounded-[14px] border border-white/12 bg-black/25 px-4 text-[14px] font-semibold text-ink-1 outline-none transition focus:border-accent-1/70 focus:bg-black/35"
-          >
-            {(pref.data ?? []).map((option) => {
-              const optionValue = String(option.value ?? option.title ?? '')
-              return (
-                <option key={`${name}:${optionValue}`} value={optionValue}>
-                  {String(option.title ?? optionValue)}
-                </option>
-              )
-            })}
-          </select>
-          {pref.description ? <span className="mt-1.5 block text-[11px] text-ink-4">{pref.description}</span> : null}
+          <span>
+            <select
+              value={value}
+              onChange={(event) => setValue(name, event.target.value)}
+              className={fieldControlClass}
+            >
+              {(pref.data ?? []).map((option) => {
+                const optionValue = String(option.value ?? option.title ?? '')
+                return (
+                  <option key={`${name}:${optionValue}`} value={optionValue}>
+                    {String(option.title ?? optionValue)}
+                  </option>
+                )
+              })}
+            </select>
+            {pref.description ? <span className={fieldHintClass}>{pref.description}</span> : null}
+          </span>
         </label>
       )
     }
 
     return (
-      <label key={name} className="block">
-        <span className="mb-2 block text-[12px] font-semibold text-ink-3">{label}</span>
-        <input
-          type={pref.type === 'password' ? 'password' : 'text'}
-          value={value}
-          onChange={(event) => setValue(name, event.target.value)}
-          placeholder={pref.description || label}
-          className="h-12 w-full rounded-[14px] border border-white/12 bg-black/25 px-4 text-[14px] text-ink-1 outline-none transition placeholder:text-ink-5 focus:border-accent-1/70 focus:bg-black/35"
-        />
+      <label key={name} className={fieldRowClass}>
+        <span className={fieldLabelClass}>
+          {label}
+          {pref.required ? <span className="ml-1 text-accent-strong">*</span> : null}
+        </span>
+        <span>
+          <input
+            type={pref.type === 'password' ? 'password' : 'text'}
+            value={value}
+            onChange={(event) => setValue(name, event.target.value)}
+            placeholder={pref.description || label}
+            className={fieldControlClass}
+          />
+          {pref.description ? <span className={fieldHintClass}>{pref.description}</span> : null}
+        </span>
       </label>
     )
   }
@@ -170,112 +207,98 @@ function PreferenceSetupView({
   }
 
   return (
-  <div className="relative flex h-full min-h-0 flex-col items-center justify-center overflow-hidden rounded-[24px] border border-white/[0.07] bg-[#0E0E10] text-white shadow-[0_32px_80px_rgba(0,0,0,0.5)]">
+    <div className="relative flex h-full min-h-0 flex-col overflow-hidden rounded-[18px] border border-white/[0.07] bg-[#1f1f2a] text-white shadow-[0_24px_70px_rgba(0,0,0,0.42)]">
+      <button
+        type="button"
+        onClick={onBack}
+        className="absolute left-4 top-4 z-10 grid h-8 w-8 place-items-center rounded-[9px] text-ink-4 transition hover:bg-white/[0.06] hover:text-ink-1"
+        aria-label="Back"
+      >
+        <svg
+          width="15"
+          height="15"
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="2.4"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+          aria-hidden
+        >
+          <path d="m15 18-6-6 6-6" />
+        </svg>
+      </button>
 
-    {/* Ambient purple glow */}
-    <div className="pointer-events-none absolute left-1/2 top-0 h-[280px] w-[500px] -translate-x-1/2 rounded-full bg-[#7C5CFC] opacity-[0.08] blur-[90px]" />
-
-    {/* Back button */}
-    <button
-      type="button"
-      onClick={onBack}
-      className="absolute left-5 top-5 z-10 grid h-9 w-9 place-items-center rounded-[10px] border border-white/[0.08] bg-white/[0.05] text-white/40 transition hover:bg-white/[0.09] hover:text-white/70"
-      aria-label="Back"
-    >
-      <span className="text-lg leading-none">‹</span>
-    </button>
-
-    {/* Scrollable content centered */}
-    <div className="relative z-0 flex w-full flex-1 flex-col items-center overflow-y-auto px-6 py-10">
-      <div className="w-full max-w-[520px]">
-
-        {/* Header */}
-        <div className="mb-8 flex flex-col items-center text-center">
-          {iconPath ? (
-            <div className="relative mb-5">
+      <div className="flex min-h-0 flex-1 justify-center overflow-y-auto px-7 pb-8 pt-8">
+        <div className="w-full max-w-[600px]">
+          <div className="mb-5 flex flex-col items-center text-center">
+            {iconPath ? (
               <img
                 src={fileUrl(iconPath)}
                 alt=""
-                className="h-[72px] w-[72px] rounded-[18px] ring-1 ring-white/10"
+                className="mb-3 h-8 w-8 rounded-[8px] border border-white/10 bg-black/20 shadow-[0_8px_24px_rgba(0,0,0,0.25)]"
               />
-              <div className="absolute inset-0 rounded-[18px] bg-gradient-to-b from-white/[0.06] to-transparent" />
-            </div>
-          ) : null}
-          <p className="mb-2.5 font-mono text-[10px] font-semibold uppercase tracking-[0.2em] text-[#7C5CFC]">
-            Extension setup
-          </p>
-          <h1 className="mb-3 text-[24px] font-bold leading-tight tracking-[-0.4px] text-white">
-            {title}
-          </h1>
-          <p className="max-w-[380px] text-[13.5px] leading-[1.7] text-white/35">
-            Configure your credentials once — Tezbar saves them locally and runs commands immediately.
-          </p>
-        </div>
-
-        {/* Divider */}
-        <div className="mb-6 h-px bg-white/[0.06]" />
-
-        {/* Fields */}
-        <div className="flex flex-col gap-5">
-          {includeApiKey ? (
-            <label className="block">
-              <span className="mb-2 block font-mono text-[10.5px] font-semibold uppercase tracking-[0.14em] text-white/30">
-                API Key
-              </span>
-              <input
-                type="password"
-                value={formValues.apiKey ?? ''}
-                onChange={(event) => setValue('apiKey', event.target.value)}
-                placeholder="sk-••••••••••••••••••••"
-                className="h-11 w-full rounded-[12px] border border-white/[0.08] bg-white/[0.04] px-4 text-[13.5px] text-white outline-none transition placeholder:text-white/20 focus:border-[#7C5CFC]/50 focus:bg-[#7C5CFC]/[0.05] focus:shadow-[0_0_0_3px_rgba(124,92,252,0.1)]"
-              />
-            </label>
-          ) : null}
-
-          {primaryPreferences.length > 0 ? (
-            <div className="grid gap-4 md:grid-cols-2">
-              {primaryPreferences.map(renderPreference)}
-            </div>
-          ) : null}
-
-          {secondaryPreferences.length > 0 ? (
-            <div className="grid gap-3">
-              {secondaryPreferences.map(renderPreference)}
-            </div>
-          ) : null}
-
-          {localError ? <Message tone="error">{localError}</Message> : null}
-        </div>
-
-        {/* Actions */}
-        <div className="mt-8 flex items-center justify-between border-t border-white/[0.06] pt-5">
-          <span className="flex items-center gap-2 text-[11.5px] text-white/20">
-            <span className="h-1.5 w-1.5 rounded-full bg-emerald-500/60" />
-            Stored locally · never shared
-          </span>
-          <div className="flex items-center gap-3">
-            <button
-              type="button"
-              className="text-[13px] font-medium text-white/30 transition hover:text-white/60"
-              onClick={onBack}
-            >
-              Cancel
-            </button>
-            <button
-              type="button"
-              onClick={() => void save()}
-              disabled={saving}
-              className="rounded-[11px] bg-[#7C5CFC] px-5 py-2.5 text-[13px] font-semibold text-white transition hover:bg-[#6D4EE8] active:scale-[0.97] disabled:cursor-not-allowed disabled:opacity-40"
-            >
-              {saving ? 'Saving…' : 'Save and continue →'}
-            </button>
+            ) : null}
+            <h1 className="text-[24px] font-bold leading-tight text-ink-1">Welcome to {title}</h1>
+            <p className="mt-3 max-w-[480px] text-[13px] font-semibold leading-6 text-ink-3">
+              Before you can start using this command, add a few things to the settings listed
+              below.
+            </p>
+            <span className="mt-3 inline-flex h-7 items-center rounded-[9px] border border-white/[0.06] bg-white/[0.08] px-3 text-[11.5px] font-bold text-ink-2">
+              Settings are stored locally
+            </span>
           </div>
-        </div>
 
+          <div className="space-y-3">
+            {includeApiKey ? (
+              <label className={fieldRowClass}>
+                <span className={fieldLabelClass}>API Key</span>
+                <input
+                  type="password"
+                  value={formValues.apiKey ?? ''}
+                  onChange={(event) => setValue('apiKey', event.target.value)}
+                  placeholder="API Key"
+                  className={fieldControlClass}
+                />
+              </label>
+            ) : null}
+
+            {primaryPreferences.map(renderPreference)}
+            {secondaryPreferences.map(renderPreference)}
+            {localError ? (
+              <div className={fieldRowClass}>
+                <div />
+                <Message tone="error">{localError}</Message>
+              </div>
+            ) : null}
+          </div>
+
+          {hasFields ? (
+            <div className="mt-6 grid items-center gap-2 sm:grid-cols-[112px_minmax(0,1fr)] sm:gap-4">
+              <div />
+              <div className="flex justify-end gap-2">
+                <button
+                  type="button"
+                  className="h-8 rounded-[9px] px-3 text-[12px] font-semibold text-ink-3 transition hover:bg-white/[0.06] hover:text-ink-1"
+                  onClick={onBack}
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  onClick={() => void save()}
+                  disabled={saving}
+                  className="h-8 rounded-[9px] bg-accent px-4 text-[12px] font-bold text-white transition hover:bg-accent-strong active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  {saving ? 'Saving...' : 'Save and continue'}
+                </button>
+              </div>
+            </div>
+          ) : null}
+        </div>
       </div>
     </div>
-  </div>
-) 
+  )
 }
 
 export default function ExtensionRuntimeView({
@@ -309,8 +332,9 @@ export default function ExtensionRuntimeView({
       try {
         const result = await window.tezbar.extensionRefreshSession({ sessionId: state.sessionId })
         console.log(
-          `[RuntimeView] Refresh complete session=${state.sessionId} after ${Math.round(performance.now() - startedAt)}ms; mode=${result.ok ? result.mode : 'error'
-          }`,
+          `[RuntimeView] Refresh complete session=${state.sessionId} after ${Math.round(performance.now() - startedAt)}ms; mode=${
+            result.ok ? result.mode : 'error'
+          }`
         )
         if (cancelled || (result.ok && result.mode === 'unchanged')) return
         if (!result.ok) {
@@ -333,7 +357,7 @@ export default function ExtensionRuntimeView({
       } catch (error) {
         console.error(
           `[RuntimeView] Refresh failed session=${state.sessionId} after ${Math.round(performance.now() - startedAt)}ms`,
-          error,
+          error
         )
         if (!cancelled) setError(error instanceof Error ? error.message : String(error))
       } finally {
@@ -354,39 +378,44 @@ export default function ExtensionRuntimeView({
     }
   }, [state.sessionId])
 
-  const handleSearchTextChanged = useCallback(async (searchText: string) => {
-    const requestSeq = searchRequestSeq.current + 1
-    searchRequestSeq.current = requestSeq
-    console.log(`[RuntimeView] Search text changed, sending to sandbox: "${searchText}"`)
-    const result = await window.tezbar.extensionSearchTextChanged({
-      sessionId: state.sessionId,
-      searchText,
-    })
-    if (requestSeq !== searchRequestSeq.current) return
+  const handleSearchTextChanged = useCallback(
+    async (searchText: string) => {
+      const requestSeq = searchRequestSeq.current + 1
+      searchRequestSeq.current = requestSeq
+      console.log(`[RuntimeView] Search text changed, sending to sandbox: "${searchText}"`)
+      const result = await window.tezbar.extensionSearchTextChanged({
+        sessionId: state.sessionId,
+        searchText,
+      })
+      if (requestSeq !== searchRequestSeq.current) return
 
-    if (!result.ok) {
-      console.error('[RuntimeView] Search failed:', result.message)
-      setError(result.message)
-      return
-    }
+      if (!result.ok) {
+        console.error('[RuntimeView] Search failed:', result.message)
+        setError(result.message)
+        return
+      }
 
-    if (result.mode === 'no-view') {
-      console.log('[RuntimeView] Search returned no-view result')
-      setState((prev) => ({ ...prev, message: result.message }))
-      return
-    }
+      if (result.mode === 'no-view') {
+        console.log('[RuntimeView] Search returned no-view result')
+        setState((prev) => ({ ...prev, message: result.message }))
+        return
+      }
 
-    console.log(`[RuntimeView] Search returned view with root type="${result.root.type}", ${result.root.children?.length ?? 0} children`)
-    setState({
-      sessionId: result.sessionId,
-      extensionId: result.extensionId,
-      commandName: result.commandName,
-      title: result.title,
-      root: result.root,
-      actions: result.actions,
-      message: result.message,
-    })
-  }, [state.sessionId])
+      console.log(
+        `[RuntimeView] Search returned view with root type="${result.root.type}", ${result.root.children?.length ?? 0} children`
+      )
+      setState({
+        sessionId: result.sessionId,
+        extensionId: result.extensionId,
+        commandName: result.commandName,
+        title: result.title,
+        root: result.root,
+        actions: result.actions,
+        message: result.message,
+      })
+    },
+    [state.sessionId]
+  )
 
   const handleLoadMore = useCallback(async () => {
     const result = await window.tezbar.extensionLoadMore({ sessionId: state.sessionId })

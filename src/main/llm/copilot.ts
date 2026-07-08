@@ -44,7 +44,7 @@ export class CopilotProvider implements LLMProvider {
 
   private async refreshIfNeeded(signal?: AbortSignal): Promise<string> {
     const { access, refresh, expiresAt, clientId } = this.readTokens()
-    if (!refresh || !clientId) {
+    if (!refresh) {
       return access
     }
     const stale = expiresAt > 0 && Date.now() > expiresAt - 120_000

@@ -90,6 +90,8 @@ contextBridge.exposeInMainWorld('tezbar', {
   removeNamedPort: (id: string) => ipcRenderer.invoke('port-manager:named:remove', id),
   executeSearchAction: (action: SearchAction, context?: SearchExecuteContext) =>
     ipcRenderer.invoke(IPC_CHANNELS.SEARCH_EXECUTE, { action, context }),
+  recordSearchActionUsage: (action: SearchAction, context?: SearchExecuteContext) =>
+    ipcRenderer.invoke(IPC_CHANNELS.SEARCH_RECORD_USAGE, { action, context }),
   runAiAction: (payload: {
     instruction: string
     selectedText?: string
@@ -144,7 +146,7 @@ contextBridge.exposeInMainWorld('tezbar', {
   setWindowContentHeight: (height: number, zoomFactor: number) =>
     ipcRenderer.invoke('window-set-content-height', { height, zoomFactor }),
   openExternalUrl: (url: string) => ipcRenderer.invoke('open-external-url', url),
-  githubDeviceStart: (clientId: string) => ipcRenderer.invoke('github-device-start', clientId),
+  githubDeviceStart: (clientId?: string) => ipcRenderer.invoke('github-device-start', clientId),
   githubDevicePoll: () => ipcRenderer.invoke('github-device-poll'),
   githubDeviceCancel: () => ipcRenderer.invoke('github-device-cancel'),
   onWindowShown: (listener: (payload: { resetUi: boolean }) => void) => {
@@ -256,9 +258,14 @@ contextBridge.exposeInMainWorld('tezbar', {
       ipcRenderer.removeListener(channel, handler)
     }
   },
-  onAppSurfaceOpen: (listener: (surface: 'command' | 'settings' | 'clipboard') => void) => {
-    const handler = (_event: IpcRendererEvent, surface: unknown): void => {
-      if (surface === 'command' || surface === 'settings' || surface === 'clipboard') {
+  onAppSurfaceOpen: (
+    listener: (surface: 'command' | 'settings' | 'clipboard' | 'extensions') => void
+  ) => {
+    const handler = (
+      _event: IpcRendererEvent,
+      surface: 'command' | 'settings' | 'clipboard' | 'extensions'
+    ): void => {
+      if (['command', 'settings', 'clipboard', 'extensions'].includes(surface)) {
         listener(surface)
       }
     }
@@ -310,6 +317,35 @@ contextBridge.exposeInMainWorld('tezbar', {
     ipcRenderer.invoke(CHAT_IPC.UPDATE_TITLE, { id, title }),
   chatDelete: (id: string) => ipcRenderer.invoke(CHAT_IPC.DELETE, id),
   chatClear: () => ipcRenderer.invoke(CHAT_IPC.CLEAR),
+  openExtensionStore: () => ipcRenderer.invoke('app:open-extensions'),
+  getInstalledExtensionsSettingsSchema: () =>
+    ipcRenderer.invoke('get-installed-extensions-settings-schema'),
+  updateCommandHotkey: (commandId: string, hotkey: string) =>
+    ipcRenderer.invoke('update-command-hotkey', commandId, hotkey),
+  toggleCommandEnabled: (commandId: string, enabled: boolean) =>
+    ipcRenderer.invoke('toggle-command-enabled', commandId, enabled),
+  getSettings: () => ipcRenderer.invoke('get-settings'),
+  saveSettings: (patch: unknown) => ipcRenderer.invoke('save-settings', patch),
+  onRunExtensionCommandFromHotkey: (
+    listener: (payload: { extensionId: string; commandName: string }) => void
+  ) => {
+    const handler = (
+      _event: IpcRendererEvent,
+      payload: { extensionId: string; commandName: string }
+    ): void => {
+      if (
+        payload &&
+        typeof payload.extensionId === 'string' &&
+        typeof payload.commandName === 'string'
+      ) {
+        listener(payload)
+      }
+    }
+    ipcRenderer.on('run-extension-command-from-hotkey', handler)
+    return (): void => {
+      ipcRenderer.removeListener('run-extension-command-from-hotkey', handler)
+    }
+  },
   appQuit: async () => {
     ipcRenderer.send('app:request-quit')
   },

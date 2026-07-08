@@ -16,6 +16,7 @@ import {
   isCustomProvider,
   normalizeProviderModelList,
   providerRows,
+  providerTitle,
   recommendedModel,
 } from '../shared/aiProviders'
 import type {
@@ -36,12 +37,11 @@ import {
   HintBar,
   Kbd,
   Message,
-  SelectField,
   TextArea,
   TextField,
 } from './ui/primitives'
 import { CurrencySettings } from './CurrencySettings'
-import ExtensionsView from './ExtensionsView'
+import ExtensionsSettingsTab from './ExtensionsSettingsTab'
 
 type SettingsTab = 'general' | 'ai' | 'voice' | 'extensions' | 'permissions' | 'storage' | 'advanced'
 
@@ -342,10 +342,30 @@ function formatBytes(bytes: number): string {
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`
 }
 
-function isProviderConfigured(provider: ProviderId, apiKey: string, baseURL: string, models: AiProviderModel[]): boolean {
+function checkProviderConfigured(
+  provider: ProviderId,
+  configs: Partial<Record<ProviderId, AiProviderConfig>>,
+  models: Partial<Record<ProviderId, AiProviderModel[]>>
+): boolean {
+  const pModels = models[provider] ?? defaultModels(provider)
+  const hasModel = pModels.length > 0
+  if (provider === 'ollama' || provider === 'opencode') return hasModel
+  const cfg = configs[provider] ?? {}
+  if (provider === 'gemini') {
+    const key = cfg.geminiApiKey ?? ''
+    return hasModel && Boolean(key.trim())
+  }
+  if (provider === 'copilot') {
+    const token = cfg.copilotGithubToken ?? ''
+    return hasModel && Boolean(token.trim())
+  }
+  const key = cfg.apiKey ?? ''
+  return hasModel && Boolean(key.trim())
+}
+
+function isProviderConfigured(provider: ProviderId, apiKey: string, _baseURL: string, models: AiProviderModel[]): boolean {
   const hasModel = models.length > 0
-  if (provider === 'ollama') return hasModel && Boolean(baseURL.trim())
-  if (provider === 'opencode') return hasModel
+  if (provider === 'ollama' || provider === 'opencode') return hasModel
   return hasModel && Boolean(apiKey.trim())
 }
 
@@ -360,11 +380,13 @@ function capabilityLabel(capability: AiModelCapability): string {
 export default function SettingsView({
   onBack,
   onOpenPermissions,
+  onBrowseStore,
   initialTab = 'general',
   nativeWindow = false,
 }: {
   onBack: () => void
   onOpenPermissions: () => void
+  onBrowseStore?: () => void
   initialTab?: SettingsTab
   nativeWindow?: boolean
 }): JSX.Element {
@@ -386,6 +408,10 @@ export default function SettingsView({
     useState<Partial<Record<ProviderId, string>>>({})
   const [customProviders, setCustomProviders] = useState<CustomAiProvider[]>([])
   const [addProviderOpen, setAddProviderOpen] = useState(false)
+  const [activeAiProvider, setActiveAiProvider] = useState<ProviderId>('ollama')
+  const [githubOAuthClientId, setGithubOAuthClientId] = useState('')
+  const [githubDeviceUserCode, setGithubDeviceUserCode] = useState('')
+  const [deviceBusy, setDeviceBusy] = useState(false)
   const [newProviderName, setNewProviderName] = useState('')
   const [newProviderBaseURL, setNewProviderBaseURL] = useState('')
   const [newProviderModel, setNewProviderModel] = useState('')
@@ -488,6 +514,7 @@ export default function SettingsView({
     setAiProviderConfigs(c.providerConfigs ?? {})
     setCustomProviders(configuredProviders)
     setAiProvider(provider)
+    setActiveAiProvider(provider)
     setAiApiKey(
       provider === 'gemini'
         ? (providerConfig.geminiApiKey ?? c.geminiApiKey ?? c.apiKey ?? '')
@@ -501,6 +528,9 @@ export default function SettingsView({
         : isCustomProvider(provider)
           ? (providerConfig.openaiCompatibleBaseURL ?? providerConfig.baseURL ?? '')
           : (providerConfig.baseURL ?? c.baseURL ?? defaultBaseUrl(provider))
+    )
+    setGithubOAuthClientId(
+      providerConfig.githubOAuthClientId ?? c.githubOAuthClientId ?? ''
     )
     const providerModels: Partial<Record<ProviderId, AiProviderModel[]>> = { ...DEFAULT_PROVIDER_MODELS }
     for (const row of providerRows(c)) {
@@ -539,6 +569,12 @@ export default function SettingsView({
   useEffect(() => {
     void reload()
   }, [reload])
+
+  useEffect(() => {
+    return () => {
+      void window.tezbar.githubDeviceCancel().catch(() => {})
+    }
+  }, [])
 
   useEffect(() => {
     rootRef.current?.focus()
@@ -603,7 +639,7 @@ export default function SettingsView({
       aiProvider === 'gemini'
         ? { ...aiProviderConfigs[aiProvider], geminiApiKey: aiApiKey, baseURL: aiBaseURL }
         : aiProvider === 'copilot'
-          ? { ...aiProviderConfigs[aiProvider], copilotGithubToken: aiApiKey }
+          ? { ...aiProviderConfigs[aiProvider], copilotGithubToken: aiApiKey, githubOAuthClientId }
           : aiProvider === 'openai-compatible' || isCustomProvider(aiProvider)
             ? { ...aiProviderConfigs[aiProvider], apiKey: aiApiKey, openaiCompatibleBaseURL: aiBaseURL }
             : { ...aiProviderConfigs[aiProvider], apiKey: aiApiKey, baseURL: aiBaseURL }
@@ -624,6 +660,7 @@ export default function SettingsView({
         ? (nextProviderConfig.openaiCompatibleBaseURL ?? defaultBaseUrl(provider))
         : (nextProviderConfig.baseURL ?? defaultBaseUrl(provider))
     )
+    setGithubOAuthClientId(nextProviderConfig.githubOAuthClientId ?? '')
     setAiNewModelId('')
     void loadAiModels(provider)
   }
@@ -637,12 +674,12 @@ export default function SettingsView({
       ...aiProviderModels,
       [provider]: normalizeProviderModelList(provider, aiProviderModels[provider] ?? defaultModels(provider)),
     }
-    const providerSelectedModels = { ...aiProviderSelectedModels, [provider]: model }
+    const providerSelectedModels: Partial<Record<ProviderId, string>> = { ...aiProviderSelectedModels, [provider]: model }
     const providerConfig: AiProviderConfig =
       provider === 'gemini'
         ? { ...aiProviderConfigs[provider], geminiApiKey: apiKey, baseURL: baseURL || defaultBaseUrl(provider) }
         : provider === 'copilot'
-          ? { ...aiProviderConfigs[provider], copilotGithubToken: aiApiKey }
+          ? { ...aiProviderConfigs[provider], copilotGithubToken: apiKey, githubOAuthClientId: githubOAuthClientId }
           : provider === 'openai-compatible' || isCustomProvider(provider)
             ? {
               ...aiProviderConfigs[provider],
@@ -650,42 +687,106 @@ export default function SettingsView({
               openaiCompatibleBaseURL: baseURL || defaultBaseUrl(provider),
             }
             : { ...aiProviderConfigs[provider], apiKey, baseURL: baseURL || defaultBaseUrl(provider) }
-    const providerConfigs = { ...aiProviderConfigs, [provider]: providerConfig }
+    const providerConfigs: Partial<Record<ProviderId, AiProviderConfig>> = { ...aiProviderConfigs, [provider]: providerConfig }
+
+    const activeProvider = activeAiProvider
+    const activeModel = providerSelectedModels[activeProvider] ?? recommendedModel(activeProvider)
+
     const patch: LlmConfigRecord = {
-      provider,
+      provider: activeProvider,
       customProviders,
-      model,
+      model: activeModel,
       providerConfigs,
       providerModels,
       providerSelectedModels,
-      taskProviderOverrides: { ...aiTaskProviderOverrides, chat: provider },
-      taskModelOverrides: { ...aiTaskModelOverrides, chat: model },
+      taskProviderOverrides: { ...aiTaskProviderOverrides, chat: activeProvider },
+      taskModelOverrides: { ...aiTaskModelOverrides, chat: activeModel },
     }
 
-    if (provider === 'openai' || provider === 'anthropic' || provider === 'deepseek') {
-      patch.apiKey = apiKey
-      if (baseURL) patch.baseURL = baseURL
+    const activeCfg = providerConfigs[activeProvider] ?? {}
+    if (activeProvider === 'openai' || activeProvider === 'anthropic' || activeProvider === 'deepseek') {
+      patch.apiKey = activeCfg.apiKey ?? ''
+      if (activeCfg.baseURL) patch.baseURL = activeCfg.baseURL
     }
-    if (provider === 'openai-compatible') {
-      patch.apiKey = apiKey
-      patch.openaiCompatibleBaseURL = baseURL || defaultBaseUrl(provider)
+    if (activeProvider === 'openai-compatible') {
+      patch.apiKey = activeCfg.apiKey ?? ''
+      patch.openaiCompatibleBaseURL = activeCfg.openaiCompatibleBaseURL ?? defaultBaseUrl(activeProvider)
     }
-    if (provider === 'gemini') {
-      patch.geminiApiKey = apiKey
-      patch.baseURL = baseURL || defaultBaseUrl(provider)
+    if (activeProvider === 'gemini') {
+      patch.geminiApiKey = activeCfg.geminiApiKey ?? ''
+      patch.baseURL = activeCfg.baseURL ?? defaultBaseUrl(activeProvider)
     }
-    if (provider === 'ollama') {
-      patch.baseURL = baseURL || defaultBaseUrl(provider)
+    if (activeProvider === 'ollama') {
+      patch.baseURL = activeCfg.baseURL ?? defaultBaseUrl(activeProvider)
     }
-    if (isCustomProvider(provider)) {
-      patch.apiKey = apiKey
-      patch.openaiCompatibleBaseURL = baseURL
+    if (isCustomProvider(activeProvider)) {
+      patch.apiKey = activeCfg.apiKey ?? ''
+      patch.openaiCompatibleBaseURL = activeCfg.openaiCompatibleBaseURL ?? ''
     }
-    if (provider === 'copilot') {
-      patch.copilotGithubToken = aiApiKey
+    if (activeProvider === 'copilot') {
+      patch.copilotGithubToken = activeCfg.copilotGithubToken ?? ''
+      patch.githubOAuthClientId = activeCfg.githubOAuthClientId ?? ''
     }
 
     return patch
+  }
+
+  const startDeviceSignIn = async (): Promise<void> => {
+    setMsg(null)
+    setGithubDeviceUserCode('')
+    const cid = githubOAuthClientId.trim()
+    setDeviceBusy(true)
+    try {
+      const patch = buildAiProviderPatch()
+      await window.tezbar.setLlmConfig({
+        ...patch,
+        ...(cid ? { githubOAuthClientId: cid } : {}),
+      })
+      const start = await window.tezbar.githubDeviceStart(cid || undefined)
+      setGithubDeviceUserCode(start.user_code)
+      setMsg({ tone: 'success', text: 'GitHub opened. Enter the code shown above.' })
+      await window.tezbar.openExternalUrl(start.verification_uri)
+      const wait = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms))
+      await wait(Math.max(1000, start.interval * 1000))
+      let finished = false
+      let polls = 0
+      while (!finished && polls < 120) {
+        polls += 1
+        const r = await window.tezbar.githubDevicePoll()
+        if (r.status === 'success') {
+          setGithubDeviceUserCode('')
+          setMsg({ tone: 'success', text: 'GitHub sign-in complete' })
+          setAiApiKey(r.access_token)
+          setAiProviderConfigs((prev) => ({
+            ...prev,
+            copilot: {
+              ...prev.copilot,
+              copilotGithubToken: r.access_token,
+              githubOAuthClientId: cid || r.client_id
+            }
+          }))
+          finished = true
+          break
+        }
+        if (r.status === 'error') {
+          setGithubDeviceUserCode('')
+          setMsg({ tone: 'error', text: r.error })
+          finished = true
+          break
+        }
+        const extra = r.status === 'slow_down' ? 5000 : 0
+        await wait(extra + Math.max(1000, start.interval * 1000))
+      }
+      if (!finished) {
+        setGithubDeviceUserCode('')
+        setMsg({ tone: 'error', text: 'Device sign-in timed out' })
+      }
+    } catch (e) {
+      setGithubDeviceUserCode('')
+      setMsg({ tone: 'error', text: e instanceof Error ? e.message : String(e) })
+    } finally {
+      setDeviceBusy(false)
+    }
   }
 
   const addAiModel = (): void => {
@@ -882,7 +983,6 @@ export default function SettingsView({
   )
 
   const currentAiModels = aiProviderModels[aiProvider] ?? defaultModels(aiProvider)
-  const configured = isProviderConfigured(aiProvider, aiApiKey, aiBaseURL, currentAiModels)
   const availableProviders = providerRows({ customProviders })
 
   return (
@@ -1055,214 +1155,341 @@ export default function SettingsView({
           ) : null}
 
           {activeTab === 'ai' ? (
-            <div className="mx-auto max-w-[610px]">
-              <SettingsRow
-                label="Provider"
-                detail={availableProviders.find((provider) => provider.id === aiProvider)?.subtitle}
-              >
-                <div className="space-y-3">
-                  <div className="flex items-center gap-2.5">
-                    <SelectField
-                      value={aiProvider}
-                      onChange={(event) => selectAiProvider(event.target.value as ProviderId)}
-                      className="max-w-[280px]"
-                    >
-                      {availableProviders.map((provider) => (
-                        <option key={provider.id} value={provider.id}>
-                          {provider.title}
-                        </option>
-                      ))}
-                    </SelectField>
-                    <span
-                      className={cx(
-                        'rounded-tezbar-chip border px-2 py-1 font-mono text-[10px] uppercase tracking-[0.14em]',
-                        configured
-                          ? 'border-emerald-400/30 bg-emerald-500/10 text-emerald-300'
-                          : 'border-amber-400/30 bg-amber-500/10 text-amber-200'
-                      )}
-                    >
-                      {configured ? 'Configured' : 'Not configured'}
-                    </span>
-                    <Button variant="ghost" onClick={() => setAddProviderOpen((open) => !open)}>
-                      {addProviderOpen ? 'Cancel' : 'Add provider'}
-                    </Button>
+            <div className="mx-auto max-w-[850px] space-y-6 animate-tezbar-scale-in">
+              {/* Two Column Provider Configurator */}
+              <div className="flex gap-6 rounded-tezbar-row border border-white/10 bg-white/[0.015] p-4 min-h-[500px]">
+                {/* Left Sidebar */}
+                <div className="w-[220px] shrink-0 border-r border-white/10 pr-4 flex flex-col justify-between">
+                  <div className="space-y-1">
+                    <div className="text-[10px] font-bold uppercase tracking-[0.15em] text-ink-3 px-2 pb-2">
+                      AI Providers
+                    </div>
+                    <div className="space-y-1 overflow-y-auto max-h-[380px] pr-1">
+                      {availableProviders.map((provider) => {
+                        const isActive = provider.id === activeAiProvider
+                        const isSelected = provider.id === aiProvider
+                        const isConfig = (() => {
+                          if (provider.id === aiProvider) {
+                            return isProviderConfigured(aiProvider, aiApiKey, aiBaseURL, currentAiModels)
+                          }
+                          return checkProviderConfigured(provider.id, aiProviderConfigs, aiProviderModels)
+                        })()
+
+                        return (
+                          <button
+                            key={provider.id}
+                            type="button"
+                            onClick={() => selectAiProvider(provider.id)}
+                            className={cx(
+                              'w-full flex items-center justify-between px-2.5 py-2 rounded-tezbar-row border text-[12px] transition text-left',
+                              isSelected
+                                ? 'border-accent/45 bg-accent/10 text-ink-1'
+                                : 'border-transparent text-ink-3 hover:bg-white/[0.04] hover:text-ink-2'
+                            )}
+                          >
+                            <div className="min-w-0 flex-1">
+                              <div className="flex items-center gap-1.5">
+                                <span className="font-semibold truncate">{provider.title}</span>
+                                {isActive ? (
+                                  <span className="rounded-tezbar-chip border border-emerald-400/30 bg-emerald-500/10 px-1 py-[1px] text-[8px] font-semibold uppercase tracking-[0.08em] text-emerald-300">
+                                    Active
+                                  </span>
+                                ) : null}
+                              </div>
+                              <span className="text-[10px] text-ink-4 block truncate mt-0.5">{provider.subtitle}</span>
+                            </div>
+
+                            <span
+                              className={cx(
+                                'ml-2 h-2.5 w-2.5 rounded-full shrink-0 border border-black/20',
+                                isConfig ? 'bg-emerald-400' : 'bg-amber-400'
+                              )}
+                              title={isConfig ? 'Configured' : 'Setup required'}
+                            />
+                          </button>
+                        )
+                      })}
+                    </div>
                   </div>
-                  {addProviderOpen ? (
-                    <div className="space-y-2 rounded-tezbar-row border border-white/10 bg-white/[0.025] p-3">
-                      <TextField
-                        value={newProviderName}
-                        onChange={(event) => setNewProviderName(event.target.value)}
-                        placeholder="Provider name"
-                      />
-                      <TextField
-                        value={newProviderBaseURL}
-                        onChange={(event) => setNewProviderBaseURL(event.target.value)}
-                        placeholder="https://your-provider.example/v1"
-                        spellCheck={false}
-                      />
-                      <div className="flex items-center gap-2">
+
+                  {/* Add Custom Provider */}
+                  <div className="pt-2 border-t border-white/[0.07]">
+                    <Button
+                      variant="ghost"
+                      className="w-full text-xs justify-center py-1.5 font-semibold"
+                      onClick={() => setAddProviderOpen((open) => !open)}
+                    >
+                      {addProviderOpen ? 'Cancel' : '+ Add custom provider'}
+                    </Button>
+
+                    {addProviderOpen ? (
+                      <div className="mt-2 space-y-2 rounded-tezbar-row border border-white/10 bg-white/[0.025] p-2 animate-tezbar-scale-in">
+                        <TextField
+                          value={newProviderName}
+                          onChange={(event) => setNewProviderName(event.target.value)}
+                          placeholder="Provider name"
+                          className="text-xs"
+                        />
+                        <TextField
+                          value={newProviderBaseURL}
+                          onChange={(event) => setNewProviderBaseURL(event.target.value)}
+                          placeholder="Base URL"
+                          className="text-xs font-mono"
+                          spellCheck={false}
+                        />
                         <TextField
                           value={newProviderModel}
                           onChange={(event) => setNewProviderModel(event.target.value)}
-                          placeholder="Initial model id"
+                          placeholder="Initial model ID"
+                          className="text-xs font-mono"
                           spellCheck={false}
                         />
-                        <Button variant="primary" onClick={addCustomProvider}>
+                        <Button
+                          variant="primary"
+                          className="w-full text-xs py-1"
+                          onClick={addCustomProvider}
+                        >
                           Create
                         </Button>
                       </div>
-                    </div>
-                  ) : null}
-                </div>
-              </SettingsRow>
-              <Divider />
-              {aiProvider !== 'ollama' && aiProvider !== 'opencode' ? (
-                <>
-                  <SettingsRow
-                    label={aiProvider === 'copilot' ? 'GitHub Token' : 'API Key'}
-                    detail={
-                      aiProvider === 'copilot'
-                        ? 'Use a GitHub token or OAuth access token with Copilot Chat access.'
-                        : 'Stored in the local Tezbar config and used by the selected provider.'
-                    }
-                  >
-                    {aiProvider === 'copilot' ? (
-                      <TextArea
-                        value={aiApiKey}
-                        onChange={(event) => setAiApiKey(event.target.value)}
-                        placeholder="ghp_... or OAuth access token"
-                        spellCheck={false}
-                      />
-                    ) : (
-                      <TextField
-                        type="password"
-                        autoComplete="off"
-                        value={aiApiKey}
-                        onChange={(event) => setAiApiKey(event.target.value)}
-                        placeholder={
-                          aiProvider === 'anthropic'
-                            ? 'sk-ant-...'
-                            : aiProvider === 'gemini'
-                              ? 'AIza...'
-                              : 'sk-...'
-                        }
-                      />
-                    )}
-                  </SettingsRow>
-                  <Divider />
-                </>
-              ) : null}
-              {aiProvider !== 'copilot' && aiProvider !== 'opencode' ? (
-                <>
-                  <SettingsRow
-                    label="Base URL"
-                    detail={
-                      aiProvider === 'ollama'
-                        ? 'Point this at your local Ollama server.'
-                        : 'Leave the default unless your provider uses a custom endpoint.'
-                    }
-                  >
-                    <TextField
-                      value={aiBaseURL}
-                      onChange={(event) => setAiBaseURL(event.target.value)}
-                      placeholder={defaultBaseUrl(aiProvider)}
-                    />
-                  </SettingsRow>
-                  <Divider />
-                </>
-              ) : null}
-              <SettingsRow
-                label="Models"
-                detail="Add every model you want available for this provider, then choose the selected one."
-              >
-                <div className="space-y-3">
-                  <div className="flex items-center gap-2">
-                    <TextField
-                      value={aiNewModelId}
-                      onChange={(event) => setAiNewModelId(event.target.value)}
-                      onKeyDown={(event) => {
-                        if (event.key === 'Enter') {
-                          event.preventDefault()
-                          addAiModel()
-                        }
-                      }}
-                      placeholder="Add model id"
-                      spellCheck={false}
-                    />
-                    <Button variant="ghost" onClick={addAiModel}>
-                      Add
-                    </Button>
-                    <Button
-                      variant="quiet"
-                      disabled={aiModelsLoading}
-                      onClick={() => void loadAiModels(aiProvider)}
-                    >
-                      {aiModelsLoading ? 'Loading...' : 'Refresh'}
-                    </Button>
+                    ) : null}
                   </div>
-                  <ul className="space-y-2">
-                    {currentAiModels.map((model) => (
-                      <li
-                        key={model.id}
-                        className={cx(
-                          'rounded-tezbar-row border px-3 py-2 transition',
-                          aiModel === model.id
-                            ? 'border-accent/45 bg-accent/10'
-                            : 'border-white/10 bg-white/[0.025]'
-                        )}
-                      >
-                        <div className="flex items-start justify-between gap-3">
-                          <button
-                            type="button"
-                            className="min-w-0 flex-1 text-left"
+                </div>
+
+                {/* Right Detail Panel */}
+                <div className="flex-1 min-w-0 pl-2 flex flex-col justify-between">
+                  <div className="space-y-4">
+                    {/* Header info */}
+                    <div className="flex items-center justify-between border-b border-white/[0.07] pb-3">
+                      <div>
+                        <h2 className="text-[14px] font-bold text-ink-1">
+                          {providerTitle(aiProvider, { customProviders })} Configuration
+                        </h2>
+                        <p className="text-[11px] text-ink-4 mt-0.5">
+                          {availableProviders.find((p) => p.id === aiProvider)?.subtitle}
+                        </p>
+                      </div>
+
+                      <div className="flex items-center gap-2">
+                        {activeAiProvider !== aiProvider ? (
+                          <Button
+                            variant="primary"
                             onClick={() => {
-                              setAiModel(model.id)
-                              setAiProviderSelectedModels((prev) => ({ ...prev, [aiProvider]: model.id }))
+                              setActiveAiProvider(aiProvider)
+                              setMsg({
+                                tone: 'success',
+                                text: `Selected ${providerTitle(aiProvider, { customProviders })} as the active provider. Remember to save settings.`,
+                              })
                             }}
                           >
-                            <span className="block truncate text-[12.5px] font-semibold text-ink-1">
-                              {model.id}
-                            </span>
-                            <span className="mt-1 flex flex-wrap gap-1">
-                              {model.capabilities.map((capability) => (
-                                <span
-                                  key={capability}
-                                  className="rounded-tezbar-chip border border-white/10 bg-white/[0.04] px-1.5 py-0.5 text-[9.5px] font-medium uppercase tracking-[0.1em] text-ink-3"
-                                >
-                                  {capabilityLabel(capability)}
-                                </span>
-                              ))}
-                              {model.contextWindow ? (
-                                <span className="rounded-tezbar-chip border border-white/10 bg-white/[0.04] px-1.5 py-0.5 text-[9.5px] font-medium uppercase tracking-[0.1em] text-ink-3">
-                                  {model.contextWindow.toLocaleString()} ctx
-                                </span>
-                              ) : null}
-                            </span>
-                          </button>
-                          <Button variant="quiet" onClick={() => removeAiModel(model.id)}>
-                            Remove
+                            Use this provider
                           </Button>
+                        ) : (
+                          <span className="text-[11px] font-semibold text-emerald-400 flex items-center gap-1.5 px-2 py-1 rounded-tezbar-chip border border-emerald-400/20 bg-emerald-500/5">
+                            <span className="h-2 w-2 rounded-full bg-emerald-400 animate-pulse" />
+                            Active Provider
+                          </span>
+                        )}
+                      </div>
+                    </div>
+
+                    {/* Provider-specific config fields */}
+                    <div className="space-y-3">
+                      {aiProvider === 'opencode' ? (
+                        <div className="p-3 rounded-tezbar-row border border-blue-500/10 bg-blue-500/5 text-[12px] text-ink-2">
+                          Uses the local <code className="font-mono bg-white/[0.05] px-1 py-0.5 rounded">opencode</code> CLI. Ensure that you have it installed and configured on your machine.
                         </div>
-                        <div className="mt-2 flex flex-wrap gap-2">
-                          {AI_CAPABILITIES.map((capability) => (
-                            <label
-                              key={capability.id}
-                              className="flex items-center gap-1.5 text-[11px] text-ink-3"
-                            >
-                              <input
-                                type="checkbox"
-                                checked={model.capabilities.includes(capability.id)}
-                                onChange={() => toggleAiModelCapability(model.id, capability.id)}
+                      ) : null}
+
+                      {aiProvider !== 'ollama' && aiProvider !== 'opencode' ? (
+                        <SettingsRow
+                          label={aiProvider === 'copilot' ? 'GitHub Token' : 'API Key'}
+                          detail={
+                            aiProvider === 'copilot'
+                              ? 'Use a GitHub token or OAuth access token with Copilot Chat access.'
+                              : 'Stored in the local Tezbar config and used by the selected provider.'
+                          }
+                        >
+                          {aiProvider === 'copilot' ? (
+                            <div className="space-y-3">
+                              <TextArea
+                                value={aiApiKey}
+                                onChange={(event) => setAiApiKey(event.target.value)}
+                                placeholder="ghp_... or OAuth access token"
+                                spellCheck={false}
                               />
-                              {capability.label}
-                            </label>
-                          ))}
+                              <div className="border-t border-white/[0.05] pt-3 mt-2 space-y-2">
+                                <div className="text-[11px] font-semibold text-ink-3">GitHub Device Flow</div>
+                                <div className="flex gap-2">
+                                  <TextField
+                                    value={githubOAuthClientId}
+                                    onChange={(event) => setGithubOAuthClientId(event.target.value)}
+                                    placeholder="OAuth Client ID (optional)"
+                                    spellCheck={false}
+                                  />
+                                  <Button
+                                    variant="ghost"
+                                    onClick={startDeviceSignIn}
+                                    disabled={deviceBusy}
+                                  >
+                                    {deviceBusy ? 'Signing in...' : 'Sign in with GitHub'}
+                                  </Button>
+                                </div>
+                                {githubDeviceUserCode ? (
+                                  <div
+                                    role="status"
+                                    aria-live="polite"
+                                    className="rounded-tezbar-row border border-emerald-300/35 bg-emerald-400/10 px-3 py-3 shadow-[0_0_0_1px_rgba(110,231,183,0.08)]"
+                                  >
+                                    <div className="text-[10px] font-bold uppercase tracking-[0.16em] text-emerald-200">
+                                      Enter this code on GitHub
+                                    </div>
+                                    <div className="mt-2 select-all rounded-tezbar-field border border-emerald-300/25 bg-black/25 px-3 py-2 text-center font-mono text-[28px] font-black tracking-[0.18em] text-emerald-100">
+                                      {githubDeviceUserCode}
+                                    </div>
+                                    <div className="mt-2 text-[11px] font-medium text-emerald-100/80">
+                                      GitHub should be open in your browser.
+                                    </div>
+                                  </div>
+                                ) : null}
+                              </div>
+                            </div>
+                          ) : (
+                            <TextField
+                              type="password"
+                              autoComplete="off"
+                              value={aiApiKey}
+                              onChange={(event) => setAiApiKey(event.target.value)}
+                              placeholder={
+                                aiProvider === 'anthropic'
+                                  ? 'sk-ant-...'
+                                  : aiProvider === 'gemini'
+                                    ? 'AIza...'
+                                    : 'sk-...'
+                              }
+                            />
+                          )}
+                        </SettingsRow>
+                      ) : null}
+
+                      {aiProvider !== 'copilot' && aiProvider !== 'opencode' ? (
+                        <SettingsRow
+                          label="Base URL"
+                          detail={
+                            aiProvider === 'ollama'
+                              ? 'Point this at your local Ollama server.'
+                              : 'Leave the default unless your provider uses a custom endpoint.'
+                          }
+                        >
+                          <TextField
+                            value={aiBaseURL}
+                            onChange={(event) => setAiBaseURL(event.target.value)}
+                            placeholder={defaultBaseUrl(aiProvider)}
+                          />
+                        </SettingsRow>
+                      ) : null}
+
+                      <Divider />
+
+                      <SettingsRow
+                        label="Models"
+                        detail="Add every model you want available for this provider, then choose the selected one."
+                      >
+                        <div className="space-y-3">
+                          <div className="flex items-center gap-2">
+                            <TextField
+                              value={aiNewModelId}
+                              onChange={(event) => setAiNewModelId(event.target.value)}
+                              onKeyDown={(event) => {
+                                if (event.key === 'Enter') {
+                                  event.preventDefault()
+                                  addAiModel()
+                                }
+                              }}
+                              placeholder="Add model id"
+                              spellCheck={false}
+                            />
+                            <Button variant="ghost" onClick={addAiModel}>
+                              Add
+                            </Button>
+                            <Button
+                              variant="quiet"
+                              disabled={aiModelsLoading}
+                              onClick={() => void loadAiModels(aiProvider)}
+                            >
+                              {aiModelsLoading ? 'Loading...' : 'Refresh'}
+                            </Button>
+                          </div>
+
+                          <ul className="space-y-2 max-h-[220px] overflow-y-auto pr-1">
+                            {currentAiModels.map((model) => (
+                              <li
+                                key={model.id}
+                                className={cx(
+                                  'rounded-tezbar-row border px-3 py-2 transition',
+                                  aiModel === model.id
+                                    ? 'border-accent/45 bg-accent/10'
+                                    : 'border-white/10 bg-white/[0.025]'
+                                )}
+                              >
+                                <div className="flex items-start justify-between gap-3">
+                                  <button
+                                    type="button"
+                                    className="min-w-0 flex-1 text-left"
+                                    onClick={() => {
+                                      setAiModel(model.id)
+                                      setAiProviderSelectedModels((prev) => ({ ...prev, [aiProvider]: model.id }))
+                                    }}
+                                  >
+                                    <span className="block truncate text-[12.5px] font-semibold text-ink-1">
+                                      {model.id}
+                                    </span>
+                                    <span className="mt-1 flex flex-wrap gap-1">
+                                      {model.capabilities.map((capability) => (
+                                        <span
+                                          key={capability}
+                                          className="rounded-tezbar-chip border border-white/10 bg-white/[0.04] px-1.5 py-0.5 text-[9.5px] font-medium uppercase tracking-[0.1em] text-ink-3"
+                                        >
+                                          {capabilityLabel(capability)}
+                                        </span>
+                                      ))}
+                                      {model.contextWindow ? (
+                                        <span className="rounded-tezbar-chip border border-white/10 bg-white/[0.04] px-1.5 py-0.5 text-[9.5px] font-medium uppercase tracking-[0.1em] text-ink-3">
+                                          {model.contextWindow.toLocaleString()} ctx
+                                        </span>
+                                      ) : null}
+                                    </span>
+                                  </button>
+                                  <Button variant="quiet" onClick={() => removeAiModel(model.id)}>
+                                    Remove
+                                  </Button>
+                                </div>
+                                <div className="mt-2 flex flex-wrap gap-2">
+                                  {AI_CAPABILITIES.map((capability) => (
+                                    <label
+                                      key={capability.id}
+                                      className="flex items-center gap-1.5 text-[11px] text-ink-3"
+                                    >
+                                      <input
+                                        type="checkbox"
+                                        checked={model.capabilities.includes(capability.id)}
+                                        onChange={() => toggleAiModelCapability(model.id, capability.id)}
+                                      />
+                                      {capability.label}
+                                    </label>
+                                  ))}
+                                </div>
+                              </li>
+                            ))}
+                          </ul>
                         </div>
-                      </li>
-                    ))}
-                  </ul>
+                      </SettingsRow>
+                    </div>
+                  </div>
                 </div>
-              </SettingsRow>
+              </div>
+
+              {/* AI Memory Section */}
               <Divider />
               <SettingsRow
                 label="AI Memory"
@@ -1290,6 +1517,8 @@ export default function SettingsView({
                   </div>
                 </div>
               </SettingsRow>
+
+              {/* Action Mode Section */}
               <Divider />
               <SettingsRow label="Action Mode">
                 <div className="space-y-2">
@@ -1311,7 +1540,14 @@ export default function SettingsView({
                   </label>
                 </div>
               </SettingsRow>
-              <div className="mt-2 flex justify-end">
+
+              {/* Global Save Button */}
+              <div className="mt-4 flex items-center justify-between">
+                <div>
+                  {msg ? (
+                    <Message tone={msg.tone}>{msg.text}</Message>
+                  ) : null}
+                </div>
                 <Button variant="primary" onClick={save}>
                   Save AI Settings
                 </Button>
@@ -1376,7 +1612,7 @@ export default function SettingsView({
           ) : null}
 
           {activeTab === 'extensions' ? (
-            <ExtensionsView embedded onBack={() => setActiveTab('general')} />
+            <ExtensionsSettingsTab onBrowseStore={onBrowseStore} />
           ) : null}
 
           {activeTab === 'storage' ? (

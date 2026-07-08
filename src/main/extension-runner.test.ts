@@ -105,6 +105,52 @@ describe('extension preference onboarding', () => {
   })
 })
 
+describe('extension runtime API compatibility', () => {
+  it('renders bundles that use Image.Mask icon masks', async () => {
+    const extensionRoot = mkdtempSync(join(tmpdir(), 'raymes-image-mask-extension-'))
+    mkdirSync(join(extensionRoot, '.sc-build'))
+    writeFileSync(
+      join(extensionRoot, 'package.json'),
+      JSON.stringify({
+        name: 'image-mask-fixture',
+        title: 'Image Mask Fixture',
+        commands: [{ name: 'index', title: 'Index', mode: 'view' }],
+      })
+    )
+    writeFileSync(
+      join(extensionRoot, '.sc-build', 'index.js'),
+      `const React = require('react').default
+       const { Image, ImageMask, List } = require('@raycast/api')
+       module.exports.default = function Command() {
+         return React.createElement(List, null,
+           React.createElement(List.Item, {
+             title: 'Arc',
+             icon: { source: 'avatar.png', mask: Image.Mask.Circle },
+             accessories: [{ text: ImageMask.RoundedRectangle }]
+           }))
+       }`
+    )
+
+    try {
+      const result = await runExtensionCommandFromPackageJson(
+        join(extensionRoot, 'package.json'),
+        'index'
+      )
+      expect(result.ok, JSON.stringify(result)).toBe(true)
+      if (!result.ok || result.mode !== 'view') return
+      expect(result.root.children[0].props.icon).toEqual({
+        source: 'avatar.png',
+        mask: 'circle',
+      })
+      expect(result.root.children[0].props.accessories).toEqual([
+        { text: 'roundedRectangle' },
+      ])
+    } finally {
+      rmSync(extensionRoot, { recursive: true, force: true })
+    }
+  })
+})
+
 describe('extension runtime list pagination', () => {
   it('runs paginated promise loaders and resets them when dependencies change', async () => {
     const extensionRoot = mkdtempSync(join(tmpdir(), 'raymes-server-pagination-extension-'))

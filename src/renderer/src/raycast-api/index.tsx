@@ -142,6 +142,7 @@ export function ExtensionRuntimeSurface(props: ExtensionRuntimeSurfaceProps): JS
             <ListRuntime
               root={root}
               title={title}
+              commandName={commandName}
               onBack={onBack}
               onRunPrimaryAction={onRunPrimaryAction}
               actions={actions}

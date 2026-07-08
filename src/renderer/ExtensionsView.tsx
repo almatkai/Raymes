@@ -210,6 +210,7 @@ export default function ExtensionsView({
   const msg = catalog.message
   const rootRef = useRef<HTMLDivElement>(null)
   const searchRef = useRef<HTMLInputElement>(null)
+  const loadRequestIdRef = useRef(0)
   const showMessage = useCallback((message: { tone: 'success' | 'error'; text: string }) => {
     dispatchCatalog({ type: 'message', message })
   }, [])
@@ -222,7 +223,9 @@ export default function ExtensionsView({
   }, [])
 
   const reload = useCallback(async () => {
-    dispatchCatalog({ type: 'load-started' })
+    const requestId = loadRequestIdRef.current + 1
+    loadRequestIdRef.current = requestId
+    dispatchCatalog({ type: 'load-started', requestId })
     try {
       const [installedList, storeList] = await Promise.all([
         window.tezbar.extensionList(),
@@ -242,12 +245,14 @@ export default function ExtensionsView({
         }))
       dispatchCatalog({
         type: 'load-succeeded',
+        requestId,
         installed: normalizedInstalled,
         store: storeList,
       })
     } catch (error) {
       dispatchCatalog({
         type: 'load-failed',
+        requestId,
         message: error instanceof Error ? error.message : 'Could not load extensions',
       })
     }

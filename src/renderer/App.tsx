@@ -118,6 +118,11 @@ function SettingsWindowApp(): JSX.Element {
               void window.tezbar.closeCurrentWindow()
             }}
             onOpenPermissions={() => setSurface('permissions')}
+            onBrowseStore={() => {
+              void window.tezbar.openExtensionStore().then(() => {
+                void window.tezbar.closeCurrentWindow()
+              })
+            }}
           />
         )}
       </Suspense>
@@ -204,6 +209,20 @@ function LauncherApp(): JSX.Element {
       }
       setSurface(nextSurface)
       focusSurface(nextSurface)
+    })
+  }, [])
+
+  useEffect(() => {
+    return window.tezbar.onRunExtensionCommandFromHotkey(({ extensionId, commandName }) => {
+      void window.tezbar
+        .extensionRunCommand({ extensionId, commandName })
+        .then((result) => {
+          if (result.ok && result.mode === 'view') {
+            setCommandInitialValue('')
+            setExtensionRuntimeInitial(result)
+            setSurface('extension-runtime')
+          }
+        })
     })
   }, [])
 
@@ -370,7 +389,7 @@ function LauncherApp(): JSX.Element {
       <div
         ref={contentRef}
         key={surface}
-        className="no-drag relative z-0 flex h-full w-full animate-tezbar-fade-in flex-col"
+        className="relative z-0 flex h-full w-full animate-tezbar-fade-in flex-col"
       >
         <Suspense fallback={<SurfaceFallback />}>
           {surface === 'settings' ? (
@@ -378,6 +397,7 @@ function LauncherApp(): JSX.Element {
               initialTab={settingsInitialTab}
               onBack={() => setSurface('command')}
               onOpenPermissions={() => setSurface('permissions')}
+              onBrowseStore={() => setSurface('extensions')}
             />
           ) : surface === 'extensions' ? (
             <ExtensionsView onBack={() => setSurface('command')} />
@@ -474,6 +494,10 @@ function LauncherApp(): JSX.Element {
               onOpenSettings={() => {
                 setSettingsInitialTab('general')
                 void openNativeSettings('general')
+              }}
+              onOpenExtensionsSettings={() => {
+                setSettingsInitialTab('extensions')
+                void openNativeSettings('extensions')
               }}
               onConfigureAi={() => {
                 void openNativeSettings('ai')

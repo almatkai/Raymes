@@ -102,6 +102,8 @@ describe('raycast shim API surface', () => {
     expect(() => api.List.Item()).not.toThrow()
     expect(() => api.Action.Submit()).not.toThrow()
     expect(() => api.Form.TextField()).not.toThrow()
+    expect(api.Image.Mask.Circle).toBe('circle')
+    expect(api.ImageMask.RoundedRectangle).toBe('roundedRectangle')
   })
 
   it('LocalStorage persists between reads inside a single run', async () => {

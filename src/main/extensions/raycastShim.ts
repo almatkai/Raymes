@@ -46,6 +46,11 @@ const TOAST_STYLE = {
   Animated: 'animated',
 } as const
 
+const IMAGE_MASK = {
+  Circle: 'circle',
+  RoundedRectangle: 'roundedRectangle',
+} as const
+
 const execFileAsync = promisify(execFile)
 
 async function runAppleScript(source: string): Promise<string> {
@@ -74,11 +79,12 @@ function createRenderProxy(name: string): unknown {
   }
   Object.defineProperty(target, 'name', { value: name })
   return new Proxy(target, {
-    get(_t, prop) {
+    get(t, prop) {
       if (prop === Symbol.toPrimitive) return () => `[Raycast:${name}]`
       if (prop === 'displayName') return name
       if (prop === 'prototype') return {}
       if (typeof prop === 'symbol') return undefined
+      if (prop in t) return Reflect.get(t, prop)
       return createRenderProxy(`${name}.${String(prop)}`)
     },
     apply() {
@@ -194,11 +200,16 @@ function createEnvironment(ctx: ShimContext): Record<string, unknown> {
 }
 
 export function createRaycastApi(ctx: ShimContext): Record<string, unknown> {
+  const Image = Object.assign(createRenderProxy('Image') as Record<string, unknown>, {
+    Mask: IMAGE_MASK,
+  })
+
   return {
     Toast: { Style: TOAST_STYLE },
     Icon: createRenderProxy('Icon'),
     Color: createRenderProxy('Color'),
-    Image: createRenderProxy('Image'),
+    Image,
+    ImageMask: IMAGE_MASK,
     List: createRenderProxy('List'),
     Form: createRenderProxy('Form'),
     Detail: createRenderProxy('Detail'),

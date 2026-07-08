@@ -11,6 +11,7 @@ import type { Intent } from '../shared/intent'
 import { defaultModels, normalizeProviderModelList } from '../shared/aiProviders'
 import type { LlmConfigRecord, ProviderId } from '../shared/llmConfig'
 import type { IconAssetKind, PathCompletionItem, SearchResult } from '../shared/search'
+import type { NativeCommandId } from '../shared/nativeCommands'
 import type { ExtensionRunCommandResult } from '../shared/extensionRuntime'
 import { Hint, HintBar, Kbd, Message, SelectField, TextField, cx } from './ui/primitives'
 import { setCommandSurfaceEscapeConsumer } from './escapeGate'
@@ -90,6 +91,14 @@ type PendingExtensionArgument = {
 }
 
 type ExtensionRuntimeViewPayload = Extract<ExtensionRunCommandResult, { ok: true; mode: 'view' }>
+
+function isPendingColorConversionAction(action: {
+  commandName: string
+  title: string
+}): boolean {
+  const haystack = `${action.title} ${action.commandName}`.toLowerCase()
+  return haystack.includes('convert') && haystack.includes('color')
+}
 
 function buildRecentExtensionCommandId(extensionId: string, commandName: string): string {
   return `extcmd:${extensionId}:${commandName}`
@@ -294,6 +303,433 @@ function TerminalIcon(): JSX.Element {
 
 type ListItemIconKind = PathCompletionItem['kind'] | SearchResult['category']
 
+type CommandIconKind =
+  | 'settings'
+  | 'extensions'
+  | 'snippets'
+  | 'notes'
+  | 'emoji'
+  | 'clipboard'
+  | 'terminal'
+  | 'moon'
+  | 'display'
+  | 'display-sleep'
+  | 'volume'
+  | 'volume-muted'
+  | 'desktop'
+  | 'dock'
+  | 'menu-bar'
+  | 'finder'
+  | 'awake'
+  | 'sleep'
+  | 'bluetooth'
+  | 'wifi'
+  | 'network'
+  | 'ip'
+  | 'dns'
+  | 'vpn'
+  | 'trash'
+  | 'lock'
+  | 'folder-downloads'
+  | 'applications'
+  | 'library'
+  | 'copy-path'
+  | 'quit'
+  | 'macos'
+  | 'cpu'
+  | 'memory'
+  | 'disk'
+  | 'battery'
+  | 'ports'
+  | 'git'
+  | 'brew'
+
+type TezbarCommandId =
+  | 'open-settings'
+  | 'open-extensions-settings'
+  | 'open-extensions'
+  | 'open-snippets'
+  | 'open-notes'
+  | 'open-emoji-picker'
+
+const TEZBAR_COMMAND_ICON_BY_ID: Record<TezbarCommandId, CommandIconKind> = {
+  'open-settings': 'settings',
+  'open-extensions-settings': 'settings',
+  'open-extensions': 'extensions',
+  'open-snippets': 'snippets',
+  'open-notes': 'notes',
+  'open-emoji-picker': 'emoji',
+}
+
+const NATIVE_COMMAND_ICON_BY_ID: Record<NativeCommandId, CommandIconKind> = {
+  'toggle-dark-mode': 'moon',
+  'start-screen-saver': 'display',
+  'sleep-display': 'display-sleep',
+  'toggle-mute': 'volume-muted',
+  'volume-up': 'volume',
+  'volume-down': 'volume',
+  'toggle-hide-desktop-icons': 'desktop',
+  'toggle-autohide-dock': 'dock',
+  'toggle-autohide-menu-bar': 'menu-bar',
+  'restart-dock': 'dock',
+  'restart-finder': 'finder',
+  'restart-menu-bar': 'menu-bar',
+  'start-keep-awake': 'awake',
+  'stop-keep-awake': 'sleep',
+  'sleep-system': 'sleep',
+  'toggle-bluetooth': 'bluetooth',
+  'toggle-wifi': 'wifi',
+  'show-network-info': 'network',
+  'show-public-ip': 'ip',
+  'flush-dns-cache': 'dns',
+  'toggle-vpn-menu': 'vpn',
+  'empty-trash': 'trash',
+  'lock-screen': 'lock',
+  'open-downloads': 'folder-downloads',
+  'open-applications': 'applications',
+  'reveal-library': 'library',
+  'copy-current-path': 'copy-path',
+  'quit-tezbar': 'quit',
+  'show-macos-version': 'macos',
+  'show-cpu-info': 'cpu',
+  'show-memory-info': 'memory',
+  'show-disk-usage': 'disk',
+  'show-battery-status': 'battery',
+  'list-listening-ports': 'ports',
+  'git-root': 'git',
+  'brew-outdated': 'brew',
+  'brew-update': 'brew',
+  'open-clipboard-history': 'clipboard',
+  'open-snippets': 'snippets',
+  'open-quick-notes': 'notes',
+  'open-emoji-picker': 'emoji',
+}
+
+function commandIconForResult(item: SearchResult): CommandIconKind | undefined {
+  if (item.action.type === 'invoke-command') {
+    return TEZBAR_COMMAND_ICON_BY_ID[item.action.commandId as TezbarCommandId]
+  }
+  if (item.action.type === 'run-native-command') {
+    return NATIVE_COMMAND_ICON_BY_ID[item.action.commandId as NativeCommandId]
+  }
+  return undefined
+}
+
+function commandIconTone(kind: CommandIconKind): string {
+  switch (kind) {
+    case 'settings':
+    case 'terminal':
+    case 'macos':
+    case 'cpu':
+    case 'memory':
+    case 'disk':
+    case 'ports':
+      return 'border-sky-300/25 bg-sky-300/10 text-sky-200'
+    case 'extensions':
+    case 'brew':
+    case 'git':
+      return 'border-amber-300/25 bg-amber-300/10 text-amber-200'
+    case 'snippets':
+    case 'notes':
+    case 'clipboard':
+    case 'emoji':
+      return 'border-emerald-300/25 bg-emerald-300/10 text-emerald-200'
+    case 'moon':
+    case 'display':
+    case 'display-sleep':
+    case 'desktop':
+    case 'dock':
+    case 'menu-bar':
+    case 'finder':
+    case 'applications':
+    case 'library':
+    case 'folder-downloads':
+    case 'copy-path':
+      return 'border-violet-300/25 bg-violet-300/10 text-violet-200'
+    case 'volume':
+    case 'volume-muted':
+    case 'bluetooth':
+    case 'wifi':
+    case 'network':
+    case 'ip':
+    case 'dns':
+    case 'vpn':
+      return 'border-cyan-300/25 bg-cyan-300/10 text-cyan-200'
+    case 'awake':
+    case 'sleep':
+    case 'battery':
+      return 'border-lime-300/25 bg-lime-300/10 text-lime-200'
+    case 'trash':
+    case 'lock':
+    case 'quit':
+      return 'border-rose-300/25 bg-rose-300/10 text-rose-200'
+    default:
+      return 'border-white/10 bg-white/[0.04] text-ink-3'
+  }
+}
+
+function CommandIconGlyph({ kind }: { kind: CommandIconKind }): ReactNode {
+  switch (kind) {
+    case 'settings':
+      return (
+        <>
+          <circle cx="7" cy="7" r="2" />
+          <path d="M7 1.75v1.5M7 10.75v1.5M2.45 4.38l1.3.75M10.25 8.87l1.3.75M2.45 9.62l1.3-.75M10.25 5.13l1.3-.75" />
+        </>
+      )
+    case 'extensions':
+      return <path d="M5.25 2.25h3.5v2h2.75v3.5h-2v3.5H6v-2H2.5v-3.5h2.75v-3.5Z" />
+    case 'snippets':
+      return (
+        <>
+          <rect x="3" y="2.25" width="8" height="9.5" rx="1.25" />
+          <path d="M5 5h4M5 7h4M5 9h2.5" />
+        </>
+      )
+    case 'notes':
+      return (
+        <>
+          <path d="M3.25 2.25h7.5v7L8 12H3.25z" />
+          <path d="M8 12V9.25h2.75M5 5h4M5 7h3" />
+        </>
+      )
+    case 'emoji':
+      return (
+        <>
+          <circle cx="7" cy="7" r="4.75" />
+          <path d="M5.25 5.75h.01M8.75 5.75h.01M5.1 8.2c.45.75 1.1 1.15 1.9 1.15s1.45-.4 1.9-1.15" />
+        </>
+      )
+    case 'clipboard':
+      return (
+        <>
+          <rect x="3" y="3.5" width="8" height="8.5" rx="1.25" />
+          <path d="M5.25 4V2.75h3.5V4M5 7h4M5 9.5h3" />
+        </>
+      )
+    case 'moon':
+      return <path d="M10.9 8.65A4.65 4.65 0 0 1 5.35 3.1 4.9 4.9 0 1 0 10.9 8.65Z" />
+    case 'display':
+      return (
+        <>
+          <rect x="2" y="2.75" width="10" height="7" rx="1.25" />
+          <path d="M5.25 12h3.5M7 9.75V12M5.25 5.25h3.5M7 3.9v2.7" />
+        </>
+      )
+    case 'display-sleep':
+      return (
+        <>
+          <rect x="2" y="3" width="10" height="6.75" rx="1.25" />
+          <path d="M5.25 12h3.5M7 9.75V12M5.4 5.6h3.2L5.4 8.1h3.2" />
+        </>
+      )
+    case 'volume':
+      return (
+        <>
+          <path d="M2.5 5.25h2.25L7.5 3v8L4.75 8.75H2.5z" />
+          <path d="M9.25 5.25c.5.45.75 1.05.75 1.75s-.25 1.3-.75 1.75M10.75 3.75c.9.85 1.35 1.93 1.35 3.25s-.45 2.4-1.35 3.25" />
+        </>
+      )
+    case 'volume-muted':
+      return (
+        <>
+          <path d="M2.5 5.25h2.25L7.5 3v8L4.75 8.75H2.5z" />
+          <path d="m9.25 5.25 2.5 2.5M11.75 5.25l-2.5 2.5" />
+        </>
+      )
+    case 'desktop':
+      return (
+        <>
+          <rect x="2" y="2.75" width="10" height="7" rx="1.25" />
+          <path d="M4 5h2M4 7h2M8 5h2M8 7h2M5.25 12h3.5M7 9.75V12" />
+        </>
+      )
+    case 'dock':
+      return (
+        <>
+          <rect x="2.25" y="8.25" width="9.5" height="3" rx="1.25" />
+          <rect x="3.25" y="3" width="2" height="3.25" rx=".6" />
+          <rect x="6" y="3" width="2" height="3.25" rx=".6" />
+          <rect x="8.75" y="3" width="2" height="3.25" rx=".6" />
+        </>
+      )
+    case 'menu-bar':
+      return (
+        <>
+          <rect x="2" y="3" width="10" height="8" rx="1.25" />
+          <path d="M2 5.25h10M4 7.25h2M8 7.25h2M4 9.25h4" />
+        </>
+      )
+    case 'finder':
+      return (
+        <>
+          <rect x="2.5" y="2.25" width="9" height="9.5" rx="1.5" />
+          <path d="M7 2.25v9.5M4.75 5.4h.01M9.25 5.4h.01M4.75 8.8c.6.45 1.35.7 2.25.7s1.65-.25 2.25-.7" />
+        </>
+      )
+    case 'awake':
+      return (
+        <>
+          <circle cx="7" cy="7" r="2.5" />
+          <path d="M7 1.75v1.2M7 11.05v1.2M1.75 7h1.2M11.05 7h1.2M3.3 3.3l.85.85M9.85 9.85l.85.85M3.3 10.7l.85-.85M9.85 4.15l.85-.85" />
+        </>
+      )
+    case 'sleep':
+      return <path d="M3.25 8.75h2.9L3.25 11h2.9M7.25 4.75h3.5L7.25 7.5h3.5M4.5 2.25h4.75L4.5 5.75h4.75" />
+    case 'bluetooth':
+      return <path d="M5.5 2.25 10 6 5.5 9.75v-7.5ZM5.5 2.25v9.5L10 8 4 4M10 6 4 10" />
+    case 'wifi':
+      return (
+        <>
+          <path d="M2.25 5.25a7.25 7.25 0 0 1 9.5 0M4.25 7.25a4.25 4.25 0 0 1 5.5 0M6.1 9.15a1.4 1.4 0 0 1 1.8 0" />
+          <circle cx="7" cy="11" r=".35" fill="currentColor" stroke="none" />
+        </>
+      )
+    case 'network':
+      return (
+        <>
+          <circle cx="7" cy="7" r="4.75" />
+          <path d="M2.75 7h8.5M7 2.25c1.1 1.25 1.65 2.85 1.65 4.75S8.1 10.5 7 11.75M7 2.25C5.9 3.5 5.35 5.1 5.35 7S5.9 10.5 7 11.75" />
+        </>
+      )
+    case 'ip':
+      return (
+        <>
+          <path d="M7 12s4-3.35 4-6.25a4 4 0 0 0-8 0C3 8.65 7 12 7 12Z" />
+          <circle cx="7" cy="5.75" r="1.25" />
+        </>
+      )
+    case 'dns':
+      return (
+        <>
+          <rect x="2.5" y="3" width="9" height="3.5" rx="1" />
+          <rect x="2.5" y="7.5" width="9" height="3.5" rx="1" />
+          <path d="M4.5 4.75h.01M4.5 9.25h.01M7 6.5v1" />
+        </>
+      )
+    case 'vpn':
+      return (
+        <>
+          <path d="M7 2.25 11 4v2.65c0 2.45-1.35 4.1-4 5.1-2.65-1-4-2.65-4-5.1V4z" />
+          <path d="M5.3 7.1 6.5 8.3l2.4-2.6" />
+        </>
+      )
+    case 'trash':
+      return (
+        <>
+          <path d="M3.25 4h7.5M5.25 4V2.75h3.5V4M4.25 5.5l.45 5.5h4.6l.45-5.5M6 6.75v2.75M8 6.75v2.75" />
+        </>
+      )
+    case 'lock':
+      return (
+        <>
+          <rect x="3.25" y="6" width="7.5" height="5.25" rx="1.25" />
+          <path d="M5 6V4.75a2 2 0 1 1 4 0V6" />
+        </>
+      )
+    case 'folder-downloads':
+      return (
+        <>
+          <path d="M2 4.5h3l1 1h6v5.75a.75.75 0 0 1-.75.75h-8.5a.75.75 0 0 1-.75-.75V4.5Z" />
+          <path d="M7 6.75v3M5.75 8.75 7 10l1.25-1.25" />
+        </>
+      )
+    case 'applications':
+      return (
+        <>
+          <rect x="2" y="2" width="4" height="4" rx="1" />
+          <rect x="8" y="2" width="4" height="4" rx="1" />
+          <rect x="2" y="8" width="4" height="4" rx="1" />
+          <rect x="8" y="8" width="4" height="4" rx="1" />
+        </>
+      )
+    case 'library':
+      return (
+        <>
+          <path d="M2.5 11.5h9M3.5 9.75v-4.5M6 9.75v-4.5M8.5 9.75v-4.5M11 9.75v-4.5M2.25 5.25 7 2.5l4.75 2.75z" />
+        </>
+      )
+    case 'copy-path':
+      return (
+        <>
+          <rect x="4.75" y="3.25" width="6.25" height="7.25" rx="1.25" />
+          <path d="M3 5.25v5.5h5M5.25 7h3.5M5.25 8.75h2.5" />
+        </>
+      )
+    case 'quit':
+      return (
+        <>
+          <path d="M7 2.25v4.25" />
+          <path d="M4.4 3.9a4.5 4.5 0 1 0 5.2 0" />
+        </>
+      )
+    case 'macos':
+      return (
+        <>
+          <rect x="2.25" y="2.75" width="9.5" height="7.25" rx="1.25" />
+          <path d="M5.25 12h3.5M7 10v2M4.5 5.25h.01M6.25 5.25h.01M8 5.25h.01" />
+        </>
+      )
+    case 'cpu':
+      return (
+        <>
+          <rect x="4" y="4" width="6" height="6" rx="1" />
+          <path d="M5.75 1.75v1.5M8.25 1.75v1.5M5.75 10.75v1.5M8.25 10.75v1.5M1.75 5.75h1.5M1.75 8.25h1.5M10.75 5.75h1.5M10.75 8.25h1.5M6 6h2v2H6z" />
+        </>
+      )
+    case 'memory':
+      return (
+        <>
+          <rect x="2.5" y="4" width="9" height="6" rx="1.25" />
+          <path d="M4 2.5v1.5M6 2.5v1.5M8 2.5v1.5M10 2.5v1.5M4 10v1.5M6 10v1.5M8 10v1.5M10 10v1.5M4.75 6.25h4.5M4.75 8h3" />
+        </>
+      )
+    case 'disk':
+      return (
+        <>
+          <ellipse cx="7" cy="4" rx="4.5" ry="1.75" />
+          <path d="M2.5 4v5.75C2.5 10.72 4.5 12 7 12s4.5-1.28 4.5-2.25V4M2.5 7c0 .97 2 1.75 4.5 1.75s4.5-.78 4.5-1.75" />
+        </>
+      )
+    case 'battery':
+      return (
+        <>
+          <rect x="2" y="4.5" width="8.5" height="5" rx="1.25" />
+          <path d="M10.5 6h1.25v2H10.5M5.75 5.75 4.9 7.2h1.35l-.85 1.55" />
+        </>
+      )
+    case 'ports':
+      return (
+        <>
+          <path d="M4 7H2.75A1.75 1.75 0 0 1 1 5.25V4.5A1.75 1.75 0 0 1 2.75 2.75H4M10 7h1.25A1.75 1.75 0 0 0 13 5.25V4.5a1.75 1.75 0 0 0-1.75-1.75H10M4 4.9h6M4 9.1h6M7 4.9v4.2M3 11.25h8" />
+        </>
+      )
+    case 'git':
+      return (
+        <>
+          <path d="M7 1.75 12.25 7 7 12.25 1.75 7z" />
+          <path d="M5.5 5.5 7 7m0 0 1.5 1.5M7 7V3.75M7 7h3.25" />
+          <circle cx="7" cy="7" r=".35" fill="currentColor" stroke="none" />
+        </>
+      )
+    case 'brew':
+      return (
+        <>
+          <path d="M4.25 5.25h5.5l-.55 5.5h-4.4zM4.75 5.25 4.25 3h5.5l-.5 2.25M9.75 6.25h1a1.25 1.25 0 0 1 0 2.5H9.5" />
+          <path d="M5.5 3V2M7 3V2M8.5 3V2" />
+        </>
+      )
+    case 'terminal':
+    default:
+      return (
+        <>
+          <rect x="1.75" y="2.25" width="10.5" height="9.5" rx="1.5" />
+          <path d="m4 5 2 2-2 2M7.5 9h2.5" />
+        </>
+      )
+  }
+}
+
 const resolvedAssetIconCache = new Map<string, string | null>()
 const pendingAssetIconCache = new Map<string, Promise<string | null>>()
 
@@ -325,11 +761,13 @@ function ListItemIcon({
   iconDataUrl,
   assetKind,
   assetPath,
+  commandIcon,
 }: {
   kind: ListItemIconKind
   iconDataUrl?: string
   assetKind?: IconAssetKind
   assetPath?: string
+  commandIcon?: CommandIconKind
 }): ReactNode {
   const iconContainerRef = useRef<HTMLSpanElement>(null)
   const [loadedAssetIcon, setLoadedAssetIcon] = useState<{
@@ -374,7 +812,9 @@ function ListItemIcon({
   }, [assetKind, assetPath])
 
   const tone =
-    kind === 'directory'
+    commandIcon
+      ? commandIconTone(commandIcon)
+      : kind === 'directory'
       ? 'border-sky-400/20 bg-sky-400/10 text-sky-300'
       : kind === 'application' || kind === 'applications'
         ? 'border-violet-400/20 bg-violet-400/10 text-violet-300'
@@ -385,6 +825,9 @@ function ListItemIcon({
             : 'border-white/10 bg-white/[0.04] text-ink-3'
 
   const glyph = (() => {
+    if (commandIcon) {
+      return <CommandIconGlyph kind={commandIcon} />
+    }
     if (kind === 'directory') {
       return <path d="M2 4.5h3l1 1h6v5.75a.75.75 0 0 1-.75.75h-8.5a.75.75 0 0 1-.75-.75V4.5Z" />
     }
@@ -525,6 +968,7 @@ export default function CommandBar({
   initialSelectedChatId = null,
   onOpenAiChat,
   onOpenSettings,
+  onOpenExtensionsSettings,
   onConfigureAi,
   onOpenExtensions,
   onOpenExtensionRuntime,
@@ -539,6 +983,7 @@ export default function CommandBar({
   initialSelectedChatId?: string | null
   onOpenAiChat: (boot: AiChatBoot) => void
   onOpenSettings: () => void
+  onOpenExtensionsSettings: () => void
   onConfigureAi: () => void
   onOpenExtensions: () => void
   onOpenExtensionRuntime: (initial: ExtensionRuntimeViewPayload) => void
@@ -811,6 +1256,15 @@ export default function CommandBar({
     if (isCompletionInput) return []
     return buildColorConversionResults(value)
   }, [isCompletionInput, value])
+  const pendingColorArgumentName = useMemo(() => {
+    if (!pendingAction || !isPendingColorConversionAction(pendingAction)) return null
+    const textArgument = pendingAction.commandArgumentDefinitions.find((def) => def.type !== 'dropdown')
+    return textArgument?.name ?? null
+  }, [pendingAction])
+  const pendingColorConversionRows = useMemo<SearchResult[]>(() => {
+    if (!pendingColorArgumentName) return []
+    return buildColorConversionResults(argumentValues[pendingColorArgumentName] ?? '')
+  }, [argumentValues, pendingColorArgumentName])
 
   const shouldOfferKillPortCommand = useMemo(() => {
     const q = value.trim().toLowerCase()
@@ -851,6 +1305,9 @@ export default function CommandBar({
         ...(killProcessResult ? [killProcessResult] : []),
       ]
     }
+    if (pendingAction) {
+      return pendingColorConversionRows
+    }
     const withoutDuplicatePort = killPortCommandResult
       ? searchResults.filter(
           (item) => item.id !== 'extcmd:raycast.port-manager:kill-listening-process'
@@ -866,7 +1323,15 @@ export default function CommandBar({
       ...withoutDuplicateColorRows,
     ]
     return calcResultRow ? [calcResultRow, ...base] : base
-  }, [calcResultRow, colorConversionRows, killPortCommandResult, killPortMode, searchResults])
+  }, [
+    calcResultRow,
+    colorConversionRows,
+    killPortCommandResult,
+    killPortMode,
+    pendingAction,
+    pendingColorConversionRows,
+    searchResults,
+  ])
   const visibleSearchCount = visibleSearchResults.length
   const topResult = visibleSearchResults[0] ?? null
   const canEnterKillPortMode =
@@ -940,6 +1405,7 @@ export default function CommandBar({
   useEffect(() => {
     if (isCompletionInput || searchResults.length === 0 || recentExtensionCommands.length === 0)
       return
+    if (value.trim()) return
     // When the calc row is present it owns index 0 and should stay
     // selected — typing `2+2` should not jump to a recent app.
     if (calcResultRow) return
@@ -952,6 +1418,7 @@ export default function CommandBar({
     isCompletionInput,
     recentExtensionCommands,
     searchResults,
+    value,
     visibleSearchResults,
     visibleSearchCount,
     calcResultRow,
@@ -1224,32 +1691,55 @@ export default function CommandBar({
     result: SearchResult,
     rank = selectedSearch + 1
   ): Promise<void> {
+    const recordHandledSearchUsage = async (): Promise<void> => {
+      try {
+        await window.tezbar.recordSearchActionUsage(result.action, {
+          query: value.trim(),
+          rank,
+          resultId: result.id,
+        })
+      } catch (error) {
+        console.warn('[Search] Failed to record handled usage:', error)
+      }
+    }
+
     if (result.action.type === 'invoke-command') {
       clearPendingAction()
       showActionMsg(null)
       setValue('')
 
       if (result.action.commandId === 'open-providers') {
+        await recordHandledSearchUsage()
         onConfigureAi()
         return
       }
       if (result.action.commandId === 'open-settings') {
+        await recordHandledSearchUsage()
         onOpenSettings()
         return
       }
+      if (result.action.commandId === 'open-extensions-settings') {
+        await recordHandledSearchUsage()
+        onOpenExtensionsSettings()
+        return
+      }
       if (result.action.commandId === 'open-extensions') {
+        await recordHandledSearchUsage()
         onOpenExtensions()
         return
       }
       if (result.action.commandId === 'open-snippets') {
+        await recordHandledSearchUsage()
         onOpenSnippetsPage()
         return
       }
       if (result.action.commandId === 'open-notes') {
+        await recordHandledSearchUsage()
         onOpenNotesPage()
         return
       }
       if (result.action.commandId === 'open-emoji-picker') {
+        await recordHandledSearchUsage()
         onOpenEmojiPicker()
         return
       }
@@ -1266,6 +1756,7 @@ export default function CommandBar({
         clearPendingAction()
         showActionMsg(null)
         setValue('')
+        await recordHandledSearchUsage()
         onOpenNotesPage({ createdAt })
         return
       }
@@ -1280,6 +1771,7 @@ export default function CommandBar({
       clearPendingAction()
       showActionMsg(null)
       setValue('')
+      await recordHandledSearchUsage()
       onOpenPortsPage()
       return
     }
@@ -1292,6 +1784,7 @@ export default function CommandBar({
       clearPendingAction()
       showActionMsg(null)
       setValue('')
+      await recordHandledSearchUsage()
       onOpenPortsPage({ tab: 'named' })
       return
     }
@@ -1303,6 +1796,7 @@ export default function CommandBar({
       clearPendingAction()
       showActionMsg(null)
       setValue('')
+      await recordHandledSearchUsage()
       onOpenPortsPage()
       return
     }
@@ -1317,6 +1811,7 @@ export default function CommandBar({
       clearPendingAction()
       showActionMsg(null)
       setValue('')
+      await recordHandledSearchUsage()
       onOpenClipboardPage()
       return
     }
@@ -1328,6 +1823,7 @@ export default function CommandBar({
       clearPendingAction()
       showActionMsg(null)
       setValue('')
+      await recordHandledSearchUsage()
       onOpenSnippetsPage()
       return
     }
@@ -1339,6 +1835,7 @@ export default function CommandBar({
       clearPendingAction()
       showActionMsg(null)
       setValue('')
+      await recordHandledSearchUsage()
       onOpenNotesPage()
       return
     }
@@ -1350,6 +1847,7 @@ export default function CommandBar({
       clearPendingAction()
       showActionMsg(null)
       setValue('')
+      await recordHandledSearchUsage()
       onOpenEmojiPicker()
       return
     }
@@ -1668,6 +2166,14 @@ export default function CommandBar({
     if (pendingAction) {
       const pendingFieldFocused = argInputRefs.current.some((el) => el === document.activeElement)
       if (pendingFieldFocused) {
+        if (pendingColorConversionRows.length > 0) {
+          const selected =
+            pendingColorConversionRows[selectedSearch] ?? pendingColorConversionRows[0]
+          if (selected) {
+            await runSelectedSearchResult(selected, selectedSearch + 1)
+            return
+          }
+        }
         await submitPendingAction()
         return
       }
@@ -2033,7 +2539,9 @@ export default function CommandBar({
                     }
                   }
                   setValue(newValue)
+                  setFollowSuggestionSelection(true)
                   setSelectedSuggestion(0)
+                  setFollowSearchSelection(true)
                   setSelectedSearch(newValue.startsWith(' ') || newValue.endsWith('  ') ? -1 : 0)
                 }}
                 onKeyDown={handleInputKeyDown}
@@ -2239,7 +2747,7 @@ export default function CommandBar({
                     <button
                       type="button"
                       className="relative flex w-full items-center justify-between gap-3 rounded-tezbar-row px-3 py-2 text-left text-[13px] text-ink-2 transition hover:text-ink-1"
-                      onMouseEnter={() => {
+                      onMouseMove={() => {
                         setFollowSuggestionSelection(false)
                         setSelectedSuggestion(i)
                       }}
@@ -2330,6 +2838,14 @@ export default function CommandBar({
                   }
                   if (e.key === 'Enter') {
                     e.preventDefault()
+                    if (pendingColorConversionRows.length > 0) {
+                      const selected =
+                        pendingColorConversionRows[selectedSearch] ?? pendingColorConversionRows[0]
+                      if (selected) {
+                        void runSelectedSearchResult(selected, selectedSearch + 1)
+                        return
+                      }
+                    }
                     void submitPendingAction()
                   }
                 }
@@ -2352,6 +2868,7 @@ export default function CommandBar({
                         onChange={(e) => {
                           const next = e.target.value
                           setArgumentValues((prev) => ({ ...prev, [arg.name]: next }))
+                          if (arg.name === pendingColorArgumentName) setSelectedSearch(0)
                         }}
                         onKeyDown={onKeyDown}
                         className="min-w-0 flex-1"
@@ -2377,6 +2894,7 @@ export default function CommandBar({
                         onChange={(e) => {
                           const next = e.target.value
                           setArgumentValues((prev) => ({ ...prev, [arg.name]: next }))
+                          if (arg.name === pendingColorArgumentName) setSelectedSearch(0)
                         }}
                         onKeyDown={onKeyDown}
                         placeholder={placeholder}
@@ -2416,7 +2934,7 @@ export default function CommandBar({
                     <button
                       type="button"
                       className="group relative flex w-full items-center gap-3 rounded-tezbar-row px-3 py-2 text-left transition"
-                      onMouseEnter={() => {
+                      onMouseMove={() => {
                         setFollowSearchSelection(false)
                         setSelectedSearch(i)
                       }}
@@ -2478,6 +2996,7 @@ export default function CommandBar({
               >
                 {visibleSearchResults.map((item, i) => {
                   const iconAsset = searchResultIconAsset(item)
+                  const commandIcon = commandIconForResult(item)
                   const pinnedMeta = pinnedMetaById.get(item.id)
                   const isCalc = item.category === 'calculator'
                   const isColorConversion = item.category === 'color-converter'
@@ -2494,7 +3013,7 @@ export default function CommandBar({
                           'relative flex w-full items-center justify-between gap-3 rounded-tezbar-row text-left transition',
                           isCalc || isColorConversion ? 'px-3 py-2.5' : 'px-3 py-2'
                         )}
-                        onMouseEnter={() => {
+                        onMouseMove={() => {
                           setFollowSearchSelection(false)
                           setSelectedSearch(i)
                         }}
@@ -2596,6 +3115,7 @@ export default function CommandBar({
                                 iconDataUrl={item.iconDataUrl}
                                 assetKind={iconAsset?.kind}
                                 assetPath={iconAsset?.path}
+                                commandIcon={commandIcon}
                               />
                               <span className="min-w-0 flex-1">
                                 <span className="block truncate text-[13px] font-medium text-ink-1">

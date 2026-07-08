@@ -10,6 +10,21 @@ type RankFeatures = {
   popularity?: number
 }
 
+type LearnedUsageFeatures = {
+  category: SearchCategory
+  frequency: number
+  successRate: number
+  lastUsedAt: number
+  now?: number
+}
+
+type QueryLearningFeatures = {
+  frequency: number
+  successRate: number
+  lastUsedAt: number
+  now?: number
+}
+
 const CATEGORY_PRIOR: Record<SearchCategory, number> = {
   applications: 0.72,
   files: 0.6,
@@ -45,6 +60,46 @@ function fuzzyBonus(distance: number | undefined): number {
   if (distance === 1) return 0.05
   if (distance === 2) return 0.02
   return 0
+}
+
+function isLearnedUsageCategory(category: SearchCategory): boolean {
+  return (
+    category === 'applications' ||
+    category === 'extensions' ||
+    category === 'native-command' ||
+    category === 'commands' ||
+    category === 'quick-notes' ||
+    category === 'snippets' ||
+    category === 'quick-links'
+  )
+}
+
+export function computeLearnedUsageBoost(input: LearnedUsageFeatures): number {
+  if (!isLearnedUsageCategory(input.category) || input.frequency <= 0 || input.lastUsedAt <= 0) {
+    return 0
+  }
+
+  const now = input.now ?? Date.now()
+  const ageMs = Math.max(0, now - input.lastUsedAt)
+  const oneDay = 24 * 60 * 60 * 1000
+  const recencyBoost = ageMs < oneDay ? 360 : ageMs < 7 * oneDay ? 220 : ageMs < 30 * oneDay ? 100 : 0
+  const frequencyBoost = Math.min(900, Math.log2(input.frequency + 1) * 220)
+  const successBoost = input.successRate >= 0.5 ? 120 : 0
+
+  return Math.round(recencyBoost + frequencyBoost + successBoost)
+}
+
+export function computeQueryLearningBoost(input: QueryLearningFeatures): number {
+  if (input.frequency <= 0 || input.lastUsedAt <= 0) return 0
+
+  const now = input.now ?? Date.now()
+  const ageMs = Math.max(0, now - input.lastUsedAt)
+  const oneDay = 24 * 60 * 60 * 1000
+  const recencyBoost = ageMs < oneDay ? 1250 : ageMs < 7 * oneDay ? 900 : ageMs < 30 * oneDay ? 550 : 250
+  const frequencyBoost = Math.min(1200, Math.log2(input.frequency + 1) * 350)
+  const successBoost = input.successRate >= 0.5 ? 150 : 0
+
+  return Math.round(recencyBoost + frequencyBoost + successBoost)
 }
 
 export function computeWeightedScore(input: RankFeatures): number {

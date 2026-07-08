@@ -93,17 +93,60 @@ export function addAgentAlwaysAllowedCommand(command: string): void {
   })
 }
 
-export function getPersistedWindowPosition(): { x: number; y: number } | null {
+export type PersistedWindowPosition = { x: number; y: number }
+
+function isPersistedWindowPosition(value: unknown): value is PersistedWindowPosition {
+  return (
+    !!value &&
+    typeof value === 'object' &&
+    typeof (value as PersistedWindowPosition).x === 'number' &&
+    typeof (value as PersistedWindowPosition).y === 'number' &&
+    Number.isFinite((value as PersistedWindowPosition).x) &&
+    Number.isFinite((value as PersistedWindowPosition).y)
+  )
+}
+
+export function getPersistedWindowPosition(): PersistedWindowPosition | null {
   const raw = readRawConfig()
-  const pos = raw.windowPosition as { x: number; y: number } | undefined
-  if (pos && typeof pos.x === 'number' && typeof pos.y === 'number') {
+  const pos = raw.windowPosition
+  if (isPersistedWindowPosition(pos)) {
     return pos
   }
   return null
 }
 
-export function setPersistedWindowPosition(pos: { x: number; y: number }): void {
+export function setPersistedWindowPosition(pos: PersistedWindowPosition): void {
   writeConfigPatch({ windowPosition: pos })
+}
+
+export function getPersistedWindowPositionForDisplay(
+  displayKey: string
+): PersistedWindowPosition | null {
+  const raw = readRawConfig()
+  const positions = raw.windowPositionsByDisplay
+  if (!positions || typeof positions !== 'object' || Array.isArray(positions)) return null
+  const pos = (positions as Record<string, unknown>)[displayKey]
+  return isPersistedWindowPosition(pos) ? pos : null
+}
+
+export function setPersistedWindowPositionForDisplay(
+  displayKey: string,
+  pos: PersistedWindowPosition
+): void {
+  const raw = readRawConfig()
+  const current =
+    raw.windowPositionsByDisplay &&
+    typeof raw.windowPositionsByDisplay === 'object' &&
+    !Array.isArray(raw.windowPositionsByDisplay)
+      ? (raw.windowPositionsByDisplay as Record<string, PersistedWindowPosition>)
+      : {}
+  writeConfigPatch({
+    windowPosition: pos,
+    windowPositionsByDisplay: {
+      ...current,
+      [displayKey]: pos,
+    },
+  })
 }
 
 export function getRaymesHotkey(): string {
@@ -113,4 +156,40 @@ export function getRaymesHotkey(): string {
 
 export function setRaymesHotkey(accelerator: string): void {
   writeConfigPatch({ raymesHotkey: accelerator })
+}
+
+export function getCommandHotkeys(): Record<string, string> {
+  const value = readRawConfig().commandHotkeys
+  if (value && typeof value === 'object' && !Array.isArray(value)) {
+    return value as Record<string, string>
+  }
+  return {}
+}
+
+export function setCommandHotkeys(hotkeys: Record<string, string>): void {
+  writeConfigPatch({ commandHotkeys: hotkeys })
+}
+
+export function getCommandAliases(): Record<string, string> {
+  const value = readRawConfig().commandAliases
+  if (value && typeof value === 'object' && !Array.isArray(value)) {
+    return value as Record<string, string>
+  }
+  return {}
+}
+
+export function setCommandAliases(aliases: Record<string, string>): void {
+  writeConfigPatch({ commandAliases: aliases })
+}
+
+export function getDisabledCommands(): Record<string, boolean> {
+  const value = readRawConfig().disabledCommands
+  if (value && typeof value === 'object' && !Array.isArray(value)) {
+    return value as Record<string, boolean>
+  }
+  return {}
+}
+
+export function setDisabledCommands(disabled: Record<string, boolean>): void {
+  writeConfigPatch({ disabledCommands: disabled })
 }

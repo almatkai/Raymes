@@ -9,14 +9,41 @@ describe('extension catalog state', () => {
   it('commits load results and clears loading atomically', () => {
     const loading = extensionCatalogReducer(INITIAL_EXTENSION_CATALOG_STATE, {
       type: 'load-started',
+      requestId: 1,
     })
     const loaded = extensionCatalogReducer(loading, {
       type: 'load-succeeded',
+      requestId: 1,
       installed: [],
       store: [{ id: 'raycast.test', name: 'Test', description: '', author: '', version: '1' }],
     })
     expect(loaded.loading).toBe(false)
     expect(loaded.store).toHaveLength(1)
+  })
+
+  it('ignores stale load results from older search requests', () => {
+    const firstLoading = extensionCatalogReducer(INITIAL_EXTENSION_CATALOG_STATE, {
+      type: 'load-started',
+      requestId: 1,
+    })
+    const latestLoading = extensionCatalogReducer(firstLoading, {
+      type: 'load-started',
+      requestId: 2,
+    })
+    const loaded = extensionCatalogReducer(latestLoading, {
+      type: 'load-succeeded',
+      requestId: 2,
+      installed: [],
+      store: [{ id: 'raycast.arc', name: 'Arc', description: '', author: '', version: '1' }],
+    })
+    const stale = extensionCatalogReducer(loaded, {
+      type: 'load-succeeded',
+      requestId: 1,
+      installed: [],
+      store: [{ id: 'raycast.brew', name: 'Brew', description: '', author: '', version: '1' }],
+    })
+
+    expect(stale.store.map((item) => item.name)).toEqual(['Arc'])
   })
 
   it('combines selection mode and install completion updates', () => {

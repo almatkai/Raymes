@@ -3,7 +3,7 @@ import DatabaseCtor, { type Database as DatabaseType } from 'better-sqlite3'
 import { mkdirSync } from 'node:fs'
 import { join } from 'node:path'
 import type { SearchAction, SearchCategory } from '../../shared/search'
-import { buildFtsQuery, levenshteinDistance, lexicalScore } from './textMatch'
+import { buildFtsQuery, fuzzySimilarityScore, levenshteinDistance, lexicalScore } from './textMatch'
 import type { IndexedDocument } from './providers/types'
 
 export type SearchIndexRow = {
@@ -37,6 +37,14 @@ type ActionStats = {
   successCount: number
   totalCount: number
   lastUsedAt: number
+}
+
+type QueryActionStats = ActionStats & {
+  query: string
+}
+
+function normalizeStoredQuery(query: string): string {
+  return query.trim().toLowerCase().replace(/\s+/g, ' ')
 }
 
 function dbPath(): string {
@@ -136,6 +144,16 @@ export class SearchIndexDatabase {
         success_count INTEGER NOT NULL DEFAULT 0,
         total_count INTEGER NOT NULL DEFAULT 0,
         last_used_at INTEGER NOT NULL DEFAULT 0
+      );
+
+      CREATE TABLE IF NOT EXISTS query_action_stats (
+        query TEXT NOT NULL,
+        action_id TEXT NOT NULL,
+        frequency INTEGER NOT NULL DEFAULT 0,
+        success_count INTEGER NOT NULL DEFAULT 0,
+        total_count INTEGER NOT NULL DEFAULT 0,
+        last_used_at INTEGER NOT NULL DEFAULT 0,
+        PRIMARY KEY (query, action_id)
       );
 
       CREATE TABLE IF NOT EXISTS benchmark_snapshots (
@@ -321,7 +339,12 @@ export class SearchIndexDatabase {
 
     const mapped = (rows as Array<{ id: string; category: SearchCategory; title: string; subtitle: string; actionJson: string; updatedAt: number; popularity: number; bm25Score: number }>).map((row) => {
       const inverseBm25 = Number.isFinite(row.bm25Score) ? 1 / (1 + Math.max(row.bm25Score, 0)) : 0.5
-      const lexical = Math.max(inverseBm25, lexicalScore(`${row.title} ${row.subtitle}`, trimmed))
+      const searchableText = `${row.title} ${row.subtitle}`
+      const lexical = Math.max(
+        inverseBm25,
+        lexicalScore(searchableText, trimmed),
+        fuzzySimilarityScore(searchableText, trimmed)
+      )
       return {
         id: row.id,
         category: row.category,
@@ -334,11 +357,19 @@ export class SearchIndexDatabase {
       } satisfies SearchIndexRow
     })
 
-    if (mapped.length >= candidateLimit) {
-      return mapped.slice(0, candidateLimit)
+    const fuzzyRows = this.fuzzySearch(trimmed, candidateLimit)
+    const byId = new Map<string, SearchIndexRow>()
+
+    for (const row of [...mapped, ...fuzzyRows]) {
+      const existing = byId.get(row.id)
+      if (!existing || row.lexical > existing.lexical) {
+        byId.set(row.id, row)
+      }
     }
 
-    return [...mapped, ...this.fuzzySearch(trimmed, candidateLimit - mapped.length)]
+    return Array.from(byId.values())
+      .sort((a, b) => b.lexical - a.lexical)
+      .slice(0, candidateLimit)
   }
 
   private fuzzySearch(query: string, limit: number): SearchIndexRow[] {
@@ -347,17 +378,18 @@ export class SearchIndexDatabase {
     const rows = this.db
       .prepare(
         `
-          SELECT id, category, title, subtitle, action_json AS actionJson, updated_at AS updatedAt, popularity
+          SELECT id, category, title, subtitle, tokens, action_json AS actionJson, updated_at AS updatedAt, popularity
           FROM documents
           ORDER BY updated_at DESC
           LIMIT ?
         `,
       )
-      .all(Math.max(300, limit * 30)) as Array<{
+      .all(Math.max(1000, limit * 50)) as Array<{
       id: string
       category: SearchCategory
       title: string
       subtitle: string
+      tokens: string
       actionJson: string
       updatedAt: number
       popularity: number
@@ -365,10 +397,14 @@ export class SearchIndexDatabase {
 
     const scored: SearchIndexRow[] = []
     for (const row of rows) {
-      const candidate = row.title.toLowerCase()
-      const distance = levenshteinDistance(candidate, query.toLowerCase())
-      if (distance > 3 && !candidate.includes(query.toLowerCase())) continue
-      const lexical = lexicalScore(`${row.title} ${row.subtitle}`, query)
+      const searchableText = `${row.title} ${row.subtitle} ${row.tokens}`
+      const lexical = Math.max(
+        lexicalScore(searchableText, query),
+        fuzzySimilarityScore(searchableText, query)
+      )
+      if (lexical <= 0) continue
+
+      const distance = levenshteinDistance(row.title.toLowerCase(), query.toLowerCase())
       scored.push({
         id: row.id,
         category: row.category,
@@ -383,10 +419,13 @@ export class SearchIndexDatabase {
     }
 
     scored.sort((a, b) => {
+      if (a.lexical !== b.lexical) {
+        return b.lexical - a.lexical
+      }
       if (a.fuzzyDistance !== undefined && b.fuzzyDistance !== undefined && a.fuzzyDistance !== b.fuzzyDistance) {
         return a.fuzzyDistance - b.fuzzyDistance
       }
-      return b.lexical - a.lexical
+      return b.updatedAt - a.updatedAt
     })
 
     return scored.slice(0, limit)
@@ -415,6 +454,48 @@ export class SearchIndexDatabase {
       .all(...actionIds) as ActionStats[]
 
     return new Map(rows.map((row) => [row.actionId, row]))
+  }
+
+  getQueryActionStats(query: string, actionIds: string[]): Map<string, QueryActionStats> {
+    const normalizedQuery = normalizeStoredQuery(query)
+    if (!normalizedQuery || actionIds.length === 0) return new Map()
+
+    const placeholders = actionIds.map(() => '?').join(',')
+    const rows = this.db
+      .prepare(
+        `
+          SELECT query AS query,
+                 action_id AS actionId,
+                 frequency AS frequency,
+                 success_count AS successCount,
+                 total_count AS totalCount,
+                 last_used_at AS lastUsedAt
+          FROM query_action_stats
+          WHERE query = ? AND action_id IN (${placeholders})
+        `,
+      )
+      .all(normalizedQuery, ...actionIds) as QueryActionStats[]
+
+    return new Map(rows.map((row) => [row.actionId, row]))
+  }
+
+  listQueryActionIds(query: string, limit: number): string[] {
+    const normalizedQuery = normalizeStoredQuery(query)
+    if (!normalizedQuery || limit <= 0) return []
+
+    const rows = this.db
+      .prepare(
+        `
+          SELECT action_id AS actionId
+          FROM query_action_stats
+          WHERE query = ? AND success_count > 0
+          ORDER BY last_used_at DESC, frequency DESC
+          LIMIT ?
+        `,
+      )
+      .all(normalizedQuery, limit) as Array<{ actionId: string }>
+
+    return rows.map((row) => row.actionId)
   }
 
   getDocumentsByIds(ids: string[]): SearchIndexRow[] {
@@ -501,6 +582,26 @@ export class SearchIndexDatabase {
         `,
       )
       .run(actionId, success ? 1 : 0, now)
+  }
+
+  recordActionForQuery(query: string, actionId: string, success: boolean): void {
+    const normalizedQuery = normalizeStoredQuery(query)
+    if (!normalizedQuery) return
+
+    const now = Date.now()
+    this.db
+      .prepare(
+        `
+          INSERT INTO query_action_stats (query, action_id, frequency, success_count, total_count, last_used_at)
+          VALUES (?, ?, 1, ?, 1, ?)
+          ON CONFLICT(query, action_id) DO UPDATE SET
+            frequency = query_action_stats.frequency + 1,
+            success_count = query_action_stats.success_count + excluded.success_count,
+            total_count = query_action_stats.total_count + 1,
+            last_used_at = excluded.last_used_at
+        `,
+      )
+      .run(normalizedQuery, actionId, success ? 1 : 0, now)
   }
 
   recordClick(query: string, resultId: string, rank: number, success: boolean): void {

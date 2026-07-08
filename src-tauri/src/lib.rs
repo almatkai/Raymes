@@ -2,17 +2,39 @@
 mod native_input;
 mod native_terminal;
 
+use core_foundation::base::{CFType, TCFType};
+use core_foundation::dictionary::{CFDictionary, CFDictionaryRef};
+use core_foundation::number::CFNumber;
+use core_foundation::string::{CFString, CFStringRef};
+use core_graphics::window::{
+    copy_window_info, kCGWindowAlpha, kCGWindowBounds, kCGWindowLayer,
+    kCGWindowListExcludeDesktopElements, kCGWindowListOptionOnScreenOnly, kCGWindowOwnerName,
+};
+use serde::{Deserialize, Serialize};
 use serde_json::json;
 use std::collections::HashMap;
+use std::fs;
 use std::io::{BufRead, BufReader, Write};
 use std::net::{TcpListener, TcpStream};
+use std::path::PathBuf;
 use std::process::{Command, Stdio};
 use std::str::FromStr;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
-use tauri::{AppHandle, Emitter, LogicalPosition, LogicalSize, Manager, State, WebviewWindow};
+use tauri::{
+    AppHandle, Emitter, LogicalSize, Manager, Monitor, PhysicalPosition, State, WebviewWindow,
+};
 use tauri_plugin_global_shortcut::{GlobalShortcutExt, Shortcut, ShortcutState};
 use tokio::sync::oneshot;
+
+const WINDOW_WIDTH: f64 = 760.0;
+const WINDOW_MIN_HEIGHT: f64 = 120.0;
+const WINDOW_MAX_HEIGHT: f64 = 640.0;
+const WINDOW_TOP_FACTOR: f64 = 0.12;
+const TAURI_WINDOW_POSITION_KEY: &str = "tauriWindowPosition";
+const TAURI_WINDOW_POSITIONS_BY_DISPLAY_KEY: &str = "tauriWindowPositionsByDisplay";
+const LEGACY_WINDOW_POSITION_KEY: &str = "windowPosition";
+const LEGACY_WINDOW_POSITIONS_BY_DISPLAY_KEY: &str = "windowPositionsByDisplay";
 
 struct BackendState {
     writer: Arc<Mutex<Option<TcpStream>>>,
@@ -24,6 +46,12 @@ struct BackendState {
 struct WindowBehaviorState {
     suppress_blur_hide: Mutex<bool>,
     backend_hidden_windows: Mutex<Vec<String>>,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Serialize)]
+struct PersistedWindowPosition {
+    x: f64,
+    y: f64,
 }
 
 fn set_backend_app_visibility(app: &AppHandle, visible: bool) {
@@ -51,27 +79,393 @@ fn set_backend_app_visibility(app: &AppHandle, visible: bool) {
     }
 }
 
-fn place_window(window: &WebviewWindow) -> Result<(), String> {
-    let monitor = window
-        .primary_monitor()
-        .map_err(|e| e.to_string())?
-        .ok_or_else(|| "No monitor found".to_string())?;
+fn openray_config_path() -> Option<PathBuf> {
+    std::env::var_os("HOME").map(|home| PathBuf::from(home).join(".openray").join("config.json"))
+}
 
+fn read_openray_config() -> serde_json::Value {
+    let Some(path) = openray_config_path() else {
+        return json!({});
+    };
+    let Ok(raw) = fs::read_to_string(path) else {
+        return json!({});
+    };
+    serde_json::from_str::<serde_json::Value>(&raw)
+        .ok()
+        .filter(|value| value.is_object())
+        .unwrap_or_else(|| json!({}))
+}
+
+fn position_from_config_value(
+    value: Option<&serde_json::Value>,
+) -> Option<PersistedWindowPosition> {
+    serde_json::from_value(value?.clone()).ok()
+}
+
+fn legacy_logical_to_physical_position(
+    position: PersistedWindowPosition,
+    monitor: &Monitor,
+) -> PersistedWindowPosition {
     let scale_factor = monitor.scale_factor();
+    let monitor_position = monitor.position();
+    let logical_monitor_x = monitor_position.x as f64 / scale_factor;
+    let logical_monitor_y = monitor_position.y as f64 / scale_factor;
+    PersistedWindowPosition {
+        x: monitor_position.x as f64 + (position.x - logical_monitor_x) * scale_factor,
+        y: monitor_position.y as f64 + (position.y - logical_monitor_y) * scale_factor,
+    }
+}
+
+fn physical_to_legacy_logical_position(
+    position: PersistedWindowPosition,
+    monitor: &Monitor,
+) -> PersistedWindowPosition {
+    let scale_factor = monitor.scale_factor();
+    let monitor_position = monitor.position();
+    let logical_monitor_x = monitor_position.x as f64 / scale_factor;
+    let logical_monitor_y = monitor_position.y as f64 / scale_factor;
+    PersistedWindowPosition {
+        x: logical_monitor_x + (position.x - monitor_position.x as f64) / scale_factor,
+        y: logical_monitor_y + (position.y - monitor_position.y as f64) / scale_factor,
+    }
+}
+
+fn persisted_window_position(monitor: &Monitor) -> Option<PersistedWindowPosition> {
+    let config = read_openray_config();
+    position_from_config_value(config.get(TAURI_WINDOW_POSITION_KEY)).or_else(|| {
+        position_from_config_value(config.get(LEGACY_WINDOW_POSITION_KEY))
+            .map(|position| legacy_logical_to_physical_position(position, monitor))
+    })
+}
+
+fn persisted_window_position_for_monitor(
+    monitor_key: &str,
+    monitor: &Monitor,
+) -> Option<PersistedWindowPosition> {
+    let config = read_openray_config();
+    position_from_config_value(
+        config
+            .get(TAURI_WINDOW_POSITIONS_BY_DISPLAY_KEY)?
+            .get(monitor_key),
+    )
+    .or_else(|| {
+        position_from_config_value(
+            config
+                .get(LEGACY_WINDOW_POSITIONS_BY_DISPLAY_KEY)?
+                .get(monitor_key),
+        )
+        .map(|position| legacy_logical_to_physical_position(position, monitor))
+    })
+}
+
+fn set_position_in_object(
+    config_object: &mut serde_json::Map<String, serde_json::Value>,
+    object_key: &str,
+    monitor_key: &str,
+    position: PersistedWindowPosition,
+) {
+    let positions = config_object.entry(object_key).or_insert_with(|| json!({}));
+    if !positions.is_object() {
+        *positions = json!({});
+    }
+    if let Some(positions_object) = positions.as_object_mut() {
+        positions_object.insert(monitor_key.to_string(), json!(position));
+    }
+}
+
+fn set_persisted_window_position_for_monitor(
+    monitor_key: &str,
+    monitor: &Monitor,
+    position: PersistedWindowPosition,
+) {
+    let Some(path) = openray_config_path() else {
+        return;
+    };
+    let mut config = read_openray_config();
+    let Some(config_object) = config.as_object_mut() else {
+        return;
+    };
+
+    let legacy_position = physical_to_legacy_logical_position(position, monitor);
+    config_object.insert(TAURI_WINDOW_POSITION_KEY.to_string(), json!(position));
+    config_object.insert(
+        LEGACY_WINDOW_POSITION_KEY.to_string(),
+        json!(legacy_position),
+    );
+    set_position_in_object(
+        config_object,
+        TAURI_WINDOW_POSITIONS_BY_DISPLAY_KEY,
+        monitor_key,
+        position,
+    );
+    set_position_in_object(
+        config_object,
+        LEGACY_WINDOW_POSITIONS_BY_DISPLAY_KEY,
+        monitor_key,
+        legacy_position,
+    );
+
+    if let Some(parent) = path.parent() {
+        let _ = fs::create_dir_all(parent);
+    }
+    if let Ok(serialized) = serde_json::to_string_pretty(&config) {
+        let _ = fs::write(path, format!("{serialized}\n"));
+    }
+}
+
+fn monitor_storage_key(monitor: &Monitor) -> String {
+    let position = monitor.position();
     let size = monitor.size();
+    let name = monitor.name().map(String::as_str).unwrap_or("unknown");
+    format!(
+        "{name}:{}:{}:{}:{}:{}",
+        position.x,
+        position.y,
+        size.width,
+        size.height,
+        monitor.scale_factor()
+    )
+}
 
-    let monitor_width = size.width as f64 / scale_factor;
-    let monitor_height = size.height as f64 / scale_factor;
+fn physical_monitor_work_area(monitor: &Monitor) -> (f64, f64, f64, f64) {
+    let work_area = monitor.work_area();
+    (
+        work_area.position.x as f64,
+        work_area.position.y as f64,
+        work_area.size.width as f64,
+        work_area.size.height as f64,
+    )
+}
 
-    let win_width = 760.0;
-    let current_size = window.outer_size().map_err(|e| e.to_string())?;
-    let _win_height = current_size.height as f64 / scale_factor;
+fn cf_type_for_static_key(key: CFStringRef) -> CFType {
+    unsafe { CFString::wrap_under_get_rule(key).as_CFType() }
+}
 
-    let x = (monitor_width - win_width) / 2.0;
-    let y = monitor_height * 0.12;
+fn cf_type_for_string_key(key: &str) -> CFType {
+    CFString::new(key).as_CFType()
+}
+
+fn dictionary_value_for_key(
+    dictionary: &CFDictionary<CFType, CFType>,
+    key: &CFType,
+) -> Option<CFType> {
+    dictionary.find(key).map(|value| (*value).clone())
+}
+
+fn dictionary_number_for_key(
+    dictionary: &CFDictionary<CFType, CFType>,
+    key: &CFType,
+) -> Option<f64> {
+    dictionary_value_for_key(dictionary, key)?
+        .downcast::<CFNumber>()?
+        .to_f64()
+}
+
+fn dictionary_string_for_key(
+    dictionary: &CFDictionary<CFType, CFType>,
+    key: &CFType,
+) -> Option<String> {
+    dictionary_value_for_key(dictionary, key)?
+        .downcast::<CFString>()
+        .map(|value| value.to_string())
+}
+
+fn dictionary_for_key(
+    dictionary: &CFDictionary<CFType, CFType>,
+    key: &CFType,
+) -> Option<CFDictionary<CFType, CFType>> {
+    let value = dictionary_value_for_key(dictionary, key)?;
+    Some(unsafe {
+        CFDictionary::<CFType, CFType>::wrap_under_get_rule(value.as_CFTypeRef() as CFDictionaryRef)
+    })
+}
+
+fn frontmost_window_monitor(window: &WebviewWindow) -> Option<Monitor> {
+    let window_infos = copy_window_info(
+        kCGWindowListOptionOnScreenOnly | kCGWindowListExcludeDesktopElements,
+        0,
+    )?;
+    let layer_key = cf_type_for_static_key(unsafe { kCGWindowLayer });
+    let alpha_key = cf_type_for_static_key(unsafe { kCGWindowAlpha });
+    let owner_key = cf_type_for_static_key(unsafe { kCGWindowOwnerName });
+    let bounds_key = cf_type_for_static_key(unsafe { kCGWindowBounds });
+    let x_key = cf_type_for_string_key("X");
+    let y_key = cf_type_for_string_key("Y");
+    let width_key = cf_type_for_string_key("Width");
+    let height_key = cf_type_for_string_key("Height");
+
+    for item in window_infos.iter() {
+        let dictionary = unsafe {
+            CFDictionary::<CFType, CFType>::wrap_under_get_rule(*item as CFDictionaryRef)
+        };
+        let Some(layer) = dictionary_number_for_key(&dictionary, &layer_key) else {
+            continue;
+        };
+        if layer.round() as i32 != 0 {
+            continue;
+        }
+        if dictionary_number_for_key(&dictionary, &alpha_key).unwrap_or(0.0) <= 0.0 {
+            continue;
+        }
+        let owner = dictionary_string_for_key(&dictionary, &owner_key).unwrap_or_default();
+        if owner.is_empty()
+            || owner == "Tezbar"
+            || owner == "Raymes"
+            || owner == "Dock"
+            || owner == "Window Server"
+        {
+            continue;
+        }
+        let Some(bounds) = dictionary_for_key(&dictionary, &bounds_key) else {
+            continue;
+        };
+        let Some(x) = dictionary_number_for_key(&bounds, &x_key) else {
+            continue;
+        };
+        let Some(y) = dictionary_number_for_key(&bounds, &y_key) else {
+            continue;
+        };
+        let Some(width) = dictionary_number_for_key(&bounds, &width_key) else {
+            continue;
+        };
+        let Some(height) = dictionary_number_for_key(&bounds, &height_key) else {
+            continue;
+        };
+        if width < 40.0 || height < 40.0 {
+            continue;
+        }
+        if let Ok(Some(monitor)) = window.monitor_from_point(x + width / 2.0, y + height / 2.0) {
+            return Some(monitor);
+        }
+    }
+    None
+}
+
+fn active_monitor(window: &WebviewWindow) -> Result<Monitor, String> {
+    if let Some(monitor) = frontmost_window_monitor(window) {
+        return Ok(monitor);
+    }
+
+    if let Ok(cursor) = window.cursor_position() {
+        if let Some(monitor) = window
+            .monitor_from_point(cursor.x, cursor.y)
+            .map_err(|e| e.to_string())?
+        {
+            return Ok(monitor);
+        }
+    }
+
+    if let Some(monitor) = window.current_monitor().map_err(|e| e.to_string())? {
+        return Ok(monitor);
+    }
 
     window
-        .set_position(LogicalPosition::new(x, y))
+        .primary_monitor()
+        .map_err(|e| e.to_string())?
+        .ok_or_else(|| "No monitor found".to_string())
+}
+
+fn window_size_for_monitor(window: &WebviewWindow, monitor: &Monitor) -> (f64, f64) {
+    let scale_factor = monitor.scale_factor();
+    match window.outer_size() {
+        Ok(current_size) => (
+            current_size.width as f64,
+            (current_size.height as f64).clamp(
+                WINDOW_MIN_HEIGHT * scale_factor,
+                WINDOW_MAX_HEIGHT * scale_factor,
+            ),
+        ),
+        Err(_) => (
+            WINDOW_WIDTH * scale_factor,
+            WINDOW_MAX_HEIGHT * scale_factor,
+        ),
+    }
+}
+
+fn clamp_position_to_monitor(
+    position: PersistedWindowPosition,
+    monitor: &Monitor,
+    window_width: f64,
+    window_height: f64,
+) -> PersistedWindowPosition {
+    let (work_x, work_y, work_width, work_height) = physical_monitor_work_area(monitor);
+    let max_x = work_x + (work_width - window_width).max(0.0);
+    let max_y = work_y + (work_height - window_height).max(0.0);
+    PersistedWindowPosition {
+        x: position.x.round().clamp(work_x, max_x),
+        y: position.y.round().clamp(work_y, max_y),
+    }
+}
+
+fn position_is_on_monitor(position: PersistedWindowPosition, monitor: &Monitor) -> bool {
+    let bounds_position = monitor.position();
+    let bounds_size = monitor.size();
+    let x = bounds_position.x as f64;
+    let y = bounds_position.y as f64;
+    let width = bounds_size.width as f64;
+    let height = bounds_size.height as f64;
+    position.x >= x && position.x < x + width && position.y >= y && position.y < y + height
+}
+
+fn persist_current_window_position(window: &WebviewWindow) {
+    let Ok(position) = window.outer_position() else {
+        return;
+    };
+    let Ok(size) = window.outer_size() else {
+        return;
+    };
+    let Ok(Some(monitor)) = window.monitor_from_point(
+        position.x as f64 + size.width as f64 / 2.0,
+        position.y as f64 + size.height as f64 / 2.0,
+    ) else {
+        return;
+    };
+    set_persisted_window_position_for_monitor(
+        &monitor_storage_key(&monitor),
+        &monitor,
+        PersistedWindowPosition {
+            x: position.x as f64,
+            y: position.y as f64,
+        },
+    );
+}
+
+fn place_window(window: &WebviewWindow) -> Result<(), String> {
+    let monitor = active_monitor(window)?;
+    let (window_width, window_height) = window_size_for_monitor(window, &monitor);
+    let monitor_key = monitor_storage_key(&monitor);
+
+    if let Some(position) = persisted_window_position_for_monitor(&monitor_key, &monitor) {
+        let position = clamp_position_to_monitor(position, &monitor, window_width, window_height);
+        window
+            .set_position(PhysicalPosition::new(
+                position.x.round() as i32,
+                position.y.round() as i32,
+            ))
+            .map_err(|e| e.to_string())?;
+        return Ok(());
+    }
+
+    if let Some(position) = persisted_window_position(&monitor) {
+        if position_is_on_monitor(position, &monitor) {
+            let position =
+                clamp_position_to_monitor(position, &monitor, window_width, window_height);
+            window
+                .set_position(PhysicalPosition::new(
+                    position.x.round() as i32,
+                    position.y.round() as i32,
+                ))
+                .map_err(|e| e.to_string())?;
+            return Ok(());
+        }
+    }
+
+    let (work_x, work_y, work_width, work_height) = physical_monitor_work_area(&monitor);
+    let x = work_x + ((work_width - window_width) / 2.0).max(0.0);
+    let y = work_y + work_height * WINDOW_TOP_FACTOR;
+
+    window
+        .set_position(PhysicalPosition::new(x.round() as i32, y.round() as i32))
         .map_err(|e| e.to_string())?;
     Ok(())
 }
@@ -104,8 +498,22 @@ fn open_settings_window_cmd(app: AppHandle) -> Result<(), String> {
 }
 
 #[tauri::command]
+fn open_extensions_window(app: AppHandle) -> Result<(), String> {
+    let window = app
+        .get_webview_window("main")
+        .ok_or_else(|| "Main window not found".to_string())?;
+    place_window(&window)?;
+    window.show().map_err(|e| e.to_string())?;
+    window.set_focus().map_err(|e| e.to_string())?;
+    let _ = window.emit("window-shown", json!({ "resetUi": false }));
+    let _ = window.emit("app:open-surface", "extensions");
+    Ok(())
+}
+
+#[tauri::command]
 fn toggle_window(window: WebviewWindow) -> Result<(), String> {
     if window.is_visible().map_err(|e| e.to_string())? {
+        persist_current_window_position(&window);
         window.hide().map_err(|e| e.to_string())?;
     } else {
         place_window(&window)?;
@@ -118,6 +526,7 @@ fn toggle_window(window: WebviewWindow) -> Result<(), String> {
 
 #[tauri::command]
 fn hide_window(window: WebviewWindow) -> Result<(), String> {
+    persist_current_window_position(&window);
     window.hide().map_err(|e| e.to_string())
 }
 
@@ -133,6 +542,7 @@ fn show_window(window: WebviewWindow) -> Result<(), String> {
 #[tauri::command]
 fn close_current_window(window: WebviewWindow) -> Result<(), String> {
     if window.label() == "main" {
+        persist_current_window_position(&window);
         window.hide().map_err(|e| e.to_string())
     } else {
         window.close().map_err(|e| e.to_string())
@@ -158,7 +568,8 @@ fn start_window_snap_drag(
 }
 
 #[tauri::command]
-fn end_window_snap_drag(state: State<'_, WindowBehaviorState>) {
+fn end_window_snap_drag(window: WebviewWindow, state: State<'_, WindowBehaviorState>) {
+    persist_current_window_position(&window);
     *state.suppress_blur_hide.lock().unwrap() = false;
 }
 
@@ -311,16 +722,28 @@ pub fn run() {
             if window.label() != "main" {
                 return;
             }
-            if let tauri::WindowEvent::Focused(false) = event {
-                let state = window.state::<WindowBehaviorState>();
-                if !*state.suppress_blur_hide.lock().unwrap() {
-                    let _ = window.hide();
+            match event {
+                tauri::WindowEvent::Moved(_) => {
+                    if let Some(main_window) = window.app_handle().get_webview_window("main") {
+                        persist_current_window_position(&main_window);
+                    }
                 }
+                tauri::WindowEvent::Focused(false) => {
+                    let state = window.state::<WindowBehaviorState>();
+                    if !*state.suppress_blur_hide.lock().unwrap() {
+                        if let Some(main_window) = window.app_handle().get_webview_window("main") {
+                            persist_current_window_position(&main_window);
+                        }
+                        let _ = window.hide();
+                    }
+                }
+                _ => {}
             }
         })
     .invoke_handler(tauri::generate_handler![
       call_backend,
       open_settings_window_cmd,
+      open_extensions_window,
       toggle_window,
       hide_window,
       show_window,
@@ -376,6 +799,7 @@ pub fn run() {
       if let Ok(resource_dir) = handle.path().resource_dir() {
         cmd.env("AXHELPER_PATH", resource_dir.join("native").join("axhelper").join("axhelper"));
         cmd.env("SCREENOCR_HELPER_PATH", resource_dir.join("native").join("screenocr").join("screenocr-helper"));
+        cmd.env("COLOR_PICKER_HELPER_PATH", resource_dir.join("native").join("color-picker").join("color-picker-helper"));
         cmd.env("ESBUILD_BINARY_PATH", resource_dir.join("bin").join("esbuild"));
       }
 

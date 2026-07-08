@@ -61,6 +61,7 @@ function ProviderDetail({ id, cfg, connected, onBack, onReload }: DetailProps): 
   const [oauthClientId, setOauthClientId] = useState('')
   const [msg, setMsg] = useState<{ tone: 'success' | 'error' | 'neutral'; text: string } | null>(null)
   const [deviceBusy, setDeviceBusy] = useState(false)
+  const [deviceUserCode, setDeviceUserCode] = useState('')
   const [modelOptions, setModelOptions] = useState<string[]>([])
   const [modelsLoading, setModelsLoading] = useState(false)
 
@@ -138,16 +139,16 @@ function ProviderDetail({ id, cfg, connected, onBack, onReload }: DetailProps): 
 
   async function startDeviceSignIn(): Promise<void> {
     setMsg(null)
+    setDeviceUserCode('')
     const cid = oauthClientId.trim()
-    if (!cid) {
-      setMsg({ tone: 'error', text: 'Add a GitHub OAuth App Client ID first.' })
-      return
-    }
     setDeviceBusy(true)
     try {
-      await window.tezbar.setLlmConfig({ githubOAuthClientId: cid })
-      const start = await window.tezbar.githubDeviceStart(cid)
-      setMsg({ tone: 'neutral', text: `Open GitHub and enter code ${start.user_code}` })
+      if (cid) {
+        await window.tezbar.setLlmConfig({ githubOAuthClientId: cid })
+      }
+      const start = await window.tezbar.githubDeviceStart(cid || undefined)
+      setDeviceUserCode(start.user_code)
+      setMsg({ tone: 'neutral', text: 'GitHub opened. Enter the code shown above.' })
       await window.tezbar.openExternalUrl(start.verification_uri)
       const wait = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms))
       await wait(Math.max(1000, start.interval * 1000))
@@ -157,13 +158,17 @@ function ProviderDetail({ id, cfg, connected, onBack, onReload }: DetailProps): 
         polls += 1
         const r = await window.tezbar.githubDevicePoll()
         if (r.status === 'success') {
+          setDeviceUserCode('')
           setMsg({ tone: 'success', text: 'GitHub sign-in complete' })
+          setCopilotToken(r.access_token)
+          setOauthClientId(cid || r.client_id)
           await onReload()
           void loadModels()
           finished = true
           break
         }
         if (r.status === 'error') {
+          setDeviceUserCode('')
           setMsg({ tone: 'error', text: r.error })
           finished = true
           break
@@ -172,9 +177,11 @@ function ProviderDetail({ id, cfg, connected, onBack, onReload }: DetailProps): 
         await wait(extra + Math.max(1000, start.interval * 1000))
       }
       if (!finished) {
+        setDeviceUserCode('')
         setMsg({ tone: 'error', text: 'Device sign-in timed out' })
       }
     } catch (e) {
+      setDeviceUserCode('')
       setMsg({ tone: 'error', text: e instanceof Error ? e.message : String(e) })
     } finally {
       setDeviceBusy(false)
@@ -299,7 +306,8 @@ function ProviderDetail({ id, cfg, connected, onBack, onReload }: DetailProps): 
         {id === 'copilot' ? (
           <div className="space-y-3">
             <p className="text-[12px] leading-relaxed text-ink-3">
-              Use a GitHub token with Copilot Chat access, or sign in via device flow using a{' '}
+              Use a GitHub token with Copilot Chat access, or sign in via the built-in GitHub device flow.
+              Need to use your own OAuth app? Open{' '}
               <button
                 type="button"
                 className="text-accent-strong underline-offset-2 transition hover:underline"
@@ -307,7 +315,7 @@ function ProviderDetail({ id, cfg, connected, onBack, onReload }: DetailProps): 
                   void window.tezbar.openExternalUrl('https://github.com/settings/developers#oauth-apps')
                 }
               >
-                public OAuth App
+                developer settings
               </button>
               .
             </p>
@@ -321,14 +329,31 @@ function ProviderDetail({ id, cfg, connected, onBack, onReload }: DetailProps): 
               />
             </div>
             <div>
-              <FieldLabel>OAuth Client ID</FieldLabel>
+              <FieldLabel>OAuth Client ID (optional)</FieldLabel>
               <TextField
                 className="font-mono"
                 value={oauthClientId}
                 onChange={(e) => setOauthClientId(e.target.value)}
-                placeholder="Iv1.…"
+                placeholder="Uses Tezbar default"
               />
             </div>
+            {deviceUserCode ? (
+              <div
+                role="status"
+                aria-live="polite"
+                className="rounded-tezbar-row border border-emerald-300/35 bg-emerald-400/10 px-3 py-3 shadow-[0_0_0_1px_rgba(110,231,183,0.08)]"
+              >
+                <div className="text-[10px] font-bold uppercase tracking-[0.16em] text-emerald-200">
+                  Enter this code on GitHub
+                </div>
+                <div className="mt-2 select-all rounded-tezbar-field border border-emerald-300/25 bg-black/25 px-3 py-2 text-center font-mono text-[28px] font-black tracking-[0.18em] text-emerald-100">
+                  {deviceUserCode}
+                </div>
+                <div className="mt-2 text-[11px] font-medium text-emerald-100/80">
+                  GitHub should be open in your browser.
+                </div>
+              </div>
+            ) : null}
             <ModelPicker
               id={id}
               model={model}

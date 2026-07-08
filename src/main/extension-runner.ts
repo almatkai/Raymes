@@ -172,6 +172,11 @@ const REACT_CONTEXT = Symbol.for('react.context')
 const execFileAsync = promisify(execFile)
 const gzipAsync = promisify(gzip)
 
+const IMAGE_MASK = {
+  Circle: 'circle',
+  RoundedRectangle: 'roundedRectangle',
+} as const
+
 const sessions = new Map<string, RuntimeSession>()
 const promiseResultMemoryCache = new Map<string, { data: unknown; cachedAt: number }>()
 
@@ -491,7 +496,29 @@ async function runAppleScriptForSession(session: RuntimeSession, source: string)
   return runAppleScript(source)
 }
 
-function nativeColorPickerBinaryPath(): string {
+function nativeColorPickerBundledBinaryPath(): string | null {
+  const envPath = process.env.COLOR_PICKER_HELPER_PATH
+  if (envPath && existsSync(envPath)) return envPath
+
+  const candidates = [
+    join(process.cwd(), 'native', 'color-picker', 'color-picker-helper'),
+    join(app.getAppPath(), 'native', 'color-picker', 'color-picker-helper'),
+  ]
+
+  if (app?.isPackaged) {
+    const resourcesPath = (process as NodeJS.Process & { resourcesPath?: string }).resourcesPath
+    if (resourcesPath) {
+      candidates.unshift(
+        join(resourcesPath, 'app.asar.unpacked', 'native', 'color-picker', 'color-picker-helper'),
+        join(resourcesPath, 'native', 'color-picker', 'color-picker-helper'),
+      )
+    }
+  }
+
+  return candidates.find((candidate) => existsSync(candidate)) ?? null
+}
+
+function nativeColorPickerCachedBinaryPath(): string {
   return join(app.getPath('userData'), 'native', 'color-picker')
 }
 
@@ -506,11 +533,20 @@ function nativeColorPickerSourcePath(): string | null {
 }
 
 async function ensureNativeColorPickerBinary(): Promise<string | null> {
-  const binaryPath = nativeColorPickerBinaryPath()
-  if (existsSync(binaryPath)) return binaryPath
+  const bundledPath = nativeColorPickerBundledBinaryPath()
+  if (bundledPath) return bundledPath
 
   const sourcePath = nativeColorPickerSourcePath()
   if (!sourcePath) return null
+
+  const binaryPath = nativeColorPickerCachedBinaryPath()
+  if (existsSync(binaryPath)) {
+    try {
+      if (statSync(binaryPath).mtimeMs >= statSync(sourcePath).mtimeMs) return binaryPath
+    } catch {
+      return binaryPath
+    }
+  }
 
   const moduleCachePath = join(dirname(binaryPath), 'swift-module-cache')
   mkdirSync(dirname(binaryPath), { recursive: true })
@@ -1525,6 +1561,10 @@ function createRaycastApiShim(session: RuntimeSession): Record<string, unknown> 
     List,
     Form,
     Grid,
+    Image: {
+      Mask: IMAGE_MASK,
+    },
+    ImageMask: IMAGE_MASK,
     AI: {
       ask: async (prompt: unknown): Promise<string> => askExtensionAI(String(prompt ?? '')),
       Creativity: {

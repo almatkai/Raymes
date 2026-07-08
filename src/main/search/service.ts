@@ -29,9 +29,10 @@ import { confirmSafetyAction } from '../safety/confirm'
 import { recordSafetyEntry } from '../safety/log'
 import { getSafetyDescriptor } from '../safety/registry'
 import { fileIconDataUrl, folderIconDataUrl } from '../pathIcons'
+import { appIconDataUrl } from '../appIcon'
 import { commandBus } from './commandBus'
 // Fix imports from indexDb
-import { getInstance, readBenchmarkHistory, runOfflineBenchmarks } from './indexDb'
+import { getInstance, readBenchmarkHistory, runOfflineBenchmarks, type SearchIndexRow } from './indexDb'
 import { appsProvider, listApplications } from './providers/appsProvider'
 import { captureClipboardSnapshot, clipboardProvider } from './providers/clipboardProvider'
 import { commandsProvider } from './providers/commandsProvider'
@@ -45,13 +46,27 @@ import { addQuickNote, notesProvider } from './providers/notesProvider'
 import { quickLinksProvider } from './providers/quickLinksProvider'
 import { snippetsProvider } from './providers/snippetsProvider'
 import type { IndexedDocument, SearchProvider } from './providers/types'
-import { computeWeightedScore, shouldPreferRecent } from './ranker'
+import {
+  computeLearnedUsageBoost,
+  computeQueryLearningBoost,
+  computeWeightedScore,
+  shouldPreferRecent,
+} from './ranker'
 import { rankDirectoryRecommendations, type DirectoryVisit } from './directoryRecommendations'
 
 const execFileAsync = promisify(execFile)
 const MAX_RESULTS = 80
 const PROVIDER_REFRESH_MIN_AGE_MS = 10_000
 const FILE_INDEX_LIMIT = 4000
+
+type ProcessIdentity = {
+  name: string
+  appPath?: string
+}
+
+type ParsedOpenPortProcess = OpenPortProcess & {
+  appPath?: string
+}
 
 const SHELL_METACHAR_RE = /[;|&`$(){}[\]\n\r<>\\]/
 
@@ -175,6 +190,17 @@ function isPresent<T>(value: T | null | undefined): value is T {
 function uniqById(items: SearchResult[]): SearchResult[] {
   const seen = new Set<string>()
   const out: SearchResult[] = []
+  for (const item of items) {
+    if (seen.has(item.id)) continue
+    seen.add(item.id)
+    out.push(item)
+  }
+  return out
+}
+
+function uniqRowsById(items: SearchIndexRow[]): SearchIndexRow[] {
+  const seen = new Set<string>()
+  const out: SearchIndexRow[] = []
   for (const item of items) {
     if (seen.has(item.id)) continue
     seen.add(item.id)
@@ -410,6 +436,22 @@ function internalSurfaceBoost(
   const normalizedQuery = query.trim().toLowerCase()
   if (!normalizedQuery) return 0
 
+  if (
+    category === 'commands' &&
+    normalizedTitle === 'extensions' &&
+    normalizedQuery === 'extensions'
+  ) {
+    return 1400
+  }
+
+  if (
+    category === 'commands' &&
+    normalizedTitle === 'extensions store' &&
+    ['store', 'extension store', 'extensions store'].includes(normalizedQuery)
+  ) {
+    return 1400
+  }
+
   let boost = 0
 
   // Exact or prefix matches on title (commands, apps, etc.)
@@ -486,13 +528,17 @@ function rankRows(
 ): Array<SearchResult & { updatedAt: number }> {
   const now = Date.now()
   const stats = indexDb?.getActionStats(docs.map((entry) => entry.doc.id)) ?? new Map()
+  const queryStats = indexDb?.getQueryActionStats(query, docs.map((entry) => entry.doc.id)) ?? new Map()
 
   const ranked = docs.map((entry) => {
     const actionStat = stats.get(entry.doc.id)
+    const queryStat = queryStats.get(entry.doc.id)
     const frequency = actionStat?.frequency ?? 0
     const totalCount = actionStat?.totalCount ?? 0
     const successCount = actionStat?.successCount ?? 0
     const successRate = totalCount > 0 ? successCount / totalCount : 0
+    const queryTotalCount = queryStat?.totalCount ?? 0
+    const querySuccessRate = queryTotalCount > 0 ? (queryStat?.successCount ?? 0) / queryTotalCount : 0
     const activityAt =
       actionStat?.lastUsedAt && actionStat.lastUsedAt > 0
         ? actionStat.lastUsedAt
@@ -507,6 +553,19 @@ function rankRows(
         category: entry.doc.category,
         fuzzyDistance: entry.fuzzyDistance,
         popularity: entry.doc.popularity,
+      }) +
+      computeLearnedUsageBoost({
+        category: entry.doc.category,
+        frequency,
+        successRate,
+        lastUsedAt: actionStat?.lastUsedAt ?? 0,
+        now,
+      }) +
+      computeQueryLearningBoost({
+        frequency: queryStat?.frequency ?? 0,
+        successRate: querySuccessRate,
+        lastUsedAt: queryStat?.lastUsedAt ?? 0,
+        now,
       }) +
       internalSurfaceBoost(entry.doc.category, entry.doc.title, query, entry.doc.subtitle) +
       recentQuickNoteBoost(entry.doc.category, entry.doc.updatedAt, now) +
@@ -662,33 +721,39 @@ function displayProcessNameFromCommand(command: string): string {
   return decodeLsofCommandName(parts.at(-1) ?? trimmed)
 }
 
-function parseProcessNameMap(stdout: string): Map<string, string> {
-  const names = new Map<string, string>()
+function appPathFromCommand(command: string): string | undefined {
+  const decoded = decodeLsofCommandName(command)
+  const match = decoded.match(/(\/.*?\.app)(?:\/|$)/)
+  return match?.[1]
+}
+
+function parseProcessNameMap(stdout: string): Map<string, ProcessIdentity> {
+  const names = new Map<string, ProcessIdentity>()
 
   for (const line of stdout.split('\n')) {
     const match = line.match(/^\s*(\d+)\s+(.+?)\s*$/)
     if (!match) continue
 
     const name = displayProcessNameFromCommand(match[2])
-    if (name) names.set(match[1], name)
+    if (name) names.set(match[1], { name, appPath: appPathFromCommand(match[2]) })
   }
 
   return names
 }
 
-async function readProcessNameMap(): Promise<Map<string, string>> {
+async function readProcessNameMap(): Promise<Map<string, ProcessIdentity>> {
   try {
     const { stdout } = await execFileAsync('/bin/ps', ['-axo', 'pid=,comm='])
     return parseProcessNameMap(stdout)
   } catch {
-    return new Map<string, string>()
+    return new Map<string, ProcessIdentity>()
   }
 }
 
 function parseOpenPortProcesses(
   stdout: string,
-  processNames: Map<string, string> = new Map()
-): OpenPortProcess[] {
+  processNames: Map<string, ProcessIdentity> = new Map()
+): ParsedOpenPortProcess[] {
   const lines = stdout
     .split('\n')
     .map((line) => line.trim())
@@ -703,6 +768,7 @@ function parseOpenPortProcesses(
       user: string
       pid: string
       ports: Set<number>
+      appPath?: string
     }
   >()
 
@@ -717,7 +783,8 @@ function parseOpenPortProcesses(
     if (!Number.isFinite(port)) continue
 
     const pid = parts[1] ?? '?'
-    const process = processNames.get(pid) ?? decodeLsofCommandName(parts[0] ?? 'unknown')
+    const identity = processNames.get(pid)
+    const process = identity?.name ?? decodeLsofCommandName(parts[0] ?? 'unknown')
     const user = parts[2] ?? 'unknown'
     const key = `${process}:${pid}:${user}`
 
@@ -732,6 +799,7 @@ function parseOpenPortProcesses(
       user,
       pid,
       ports: new Set<number>([port]),
+      appPath: identity?.appPath,
     })
   }
 
@@ -741,8 +809,30 @@ function parseOpenPortProcesses(
       user: entry.user,
       pid: entry.pid,
       ports: Array.from(entry.ports).sort((a, b) => a - b),
+      appPath: entry.appPath,
     }))
     .sort((a, b) => a.process.localeCompare(b.process) || a.pid.localeCompare(b.pid))
+}
+
+async function attachOpenPortProcessIcons(
+  rows: ParsedOpenPortProcess[]
+): Promise<OpenPortProcess[]> {
+  const uniqueAppPaths = Array.from(
+    new Set(rows.map((row) => row.appPath).filter((path): path is string => Boolean(path)))
+  )
+  const icons = new Map<string, string>()
+
+  await Promise.all(
+    uniqueAppPaths.map(async (appPath) => {
+      const icon = await appIconDataUrl(appPath)
+      if (icon) icons.set(appPath, icon)
+    })
+  )
+
+  return rows.map(({ appPath, ...row }) => {
+    const iconDataUrl = appPath ? icons.get(appPath) : undefined
+    return iconDataUrl ? { ...row, iconDataUrl } : row
+  })
 }
 
 export async function searchEverything(query: string): Promise<SearchResult[]> {
@@ -754,7 +844,8 @@ export async function searchEverything(query: string): Promise<SearchResult[]> {
     return attachSearchResultIcons(buildRecommendations())
   }
 
-  const rows = indexDb.getSearch(trimmed, MAX_RESULTS)
+  const learnedRows = indexDb.getDocumentsByIds(indexDb.listQueryActionIds(trimmed, 20))
+  const rows = uniqRowsById([...indexDb.getSearch(trimmed, MAX_RESULTS), ...learnedRows])
   const docs: Array<{ doc: IndexedDocument; lexical: number; fuzzyDistance?: number }> = rows.map(
     (row) => ({
       doc: {
@@ -1434,12 +1525,12 @@ export async function listOpenPorts(): Promise<OpenPortProcess[]> {
   try {
     const { stdout } = await execFileAsync('/usr/sbin/lsof', ['-nP', '-iTCP', '-sTCP:LISTEN'])
     const processNames = await readProcessNameMap()
-    return parseOpenPortProcesses(stdout, processNames)
+    return attachOpenPortProcessIcons(parseOpenPortProcesses(stdout, processNames))
   } catch (error) {
     console.error('[OpenPorts] Failed to list listening ports:', error)
     try {
       const { stdout } = await execFileAsync('/usr/sbin/lsof', ['-nP', '-iTCP', '-sTCP:LISTEN'])
-      return parseOpenPortProcesses(stdout)
+      return attachOpenPortProcessIcons(parseOpenPortProcesses(stdout))
     } catch (fallbackError) {
       console.error('[OpenPorts] Fallback listing failed:', fallbackError)
       return []
@@ -1610,6 +1701,10 @@ export async function executeSearchAction(
   const actionId = actionIdFromResult(action, context?.resultId)
   indexDb.recordAction(actionId, result.ok)
 
+  if (context?.query && result.ok) {
+    indexDb.recordActionForQuery(context.query, actionId, true)
+  }
+
   if (result.ok && action.type === 'open-with-app' && action.appName && context?.query) {
     const parsed = splitPathCompletionQuery(context.query)
     if (parsed.appMode && parsed.appTerm) {
@@ -1622,6 +1717,23 @@ export async function executeSearchAction(
   }
 
   return result
+}
+
+export async function recordSearchActionUsage(
+  action: SearchAction,
+  context?: SearchExecuteContext
+): Promise<void> {
+  await indexDb.ensureInitialized()
+  const actionId = actionIdFromResult(action, context?.resultId)
+  indexDb.recordAction(actionId, true)
+
+  if (context?.query) {
+    indexDb.recordActionForQuery(context.query, actionId, true)
+  }
+
+  if (context?.query && typeof context.rank === 'number' && Number.isFinite(context.rank)) {
+    indexDb.recordClick(context.query, actionId, context.rank, true)
+  }
 }
 
 export async function listExtensionCommandIndexIds(): Promise<string[]> {

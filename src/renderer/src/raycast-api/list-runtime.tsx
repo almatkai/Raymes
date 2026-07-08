@@ -3,9 +3,10 @@ import type {
   ExtensionRuntimeAction,
   ExtensionRuntimeNode,
 } from '../../../shared/extensionRuntime'
-import { Hint, HintBar, Kbd, ViewHeader } from '../../ui/primitives'
+import { Hint, HintBar, Kbd, ViewHeader, cx } from '../../ui/primitives'
 import { Markdown } from '../../ui/Markdown'
 import { MetadataItem, MetadataSidebar } from './detail-runtime'
+import { buildColorConversionResults } from '../../colorConverter'
 
 type ListRow = {
   id: string
@@ -19,11 +20,13 @@ type ListRow = {
   detail?: ExtensionRuntimeNode
   section?: string
   actionIds?: string[]
+  copyText?: string
+  swatch?: string
 }
 
 type ListAccessory = {
   actionId?: string
-  options: Array<{ title: string; value: string }>
+  options: Array<{ title: string; value: string; icon?: unknown }>
 }
 
 function parseListAccessory(value: unknown): ListAccessory | null {
@@ -35,8 +38,8 @@ function parseListAccessory(value: unknown): ListAccessory | null {
   const walk = (entry: ExtensionRuntimeNode): void => {
     if (entry.type === 'List.Dropdown.Item') {
       const title = textValue(entry.props?.title)
-      const value = textValue(entry.props?.value) || title
-      if (title || value) options.push({ title: title || value, value })
+      const value = entry.props?.value !== undefined ? textValue(entry.props.value) : title
+      if (title || value) options.push({ title: title || value, value, icon: entry.props?.icon })
       return
     }
     for (const child of entry.children ?? []) walk(child)
@@ -76,6 +79,15 @@ function textValue(value: unknown): string {
     if (candidate.text !== undefined) return textValue(candidate.text)
   }
   return ''
+}
+
+function isEmojiGlyph(value: unknown): value is string {
+  if (typeof value !== 'string') return false
+  const text = value.trim()
+  if (!text || text.length > 12 || /^Icon\./i.test(text) || /^(?:data:image|https?:|file:)/i.test(text)) {
+    return false
+  }
+  return /[\p{Extended_Pictographic}\u{1F1E6}-\u{1F1FF}\u2600-\u27BF]/u.test(text)
 }
 
 function parseAccessories(value: unknown): ListRow['accessories'] | undefined {
@@ -230,8 +242,29 @@ function SymbolIcon({ icon, title }: { icon: unknown; title: string }): JSX.Elem
   )
 }
 
+function GlyphIcon({ value }: { value: string }): React.ReactNode {
+  return (
+    <span
+      className="grid h-8 w-8 shrink-0 place-items-center rounded-[8px] border border-white/[0.08] bg-white/[0.045] text-[21px] leading-none shadow-[inset_0_1px_0_rgba(255,255,255,0.08)]"
+      aria-hidden="true"
+    >
+      {value}
+    </span>
+  )
+}
+
 function RowIcon({ row }: { row: ListRow }): JSX.Element | null {
+  if (row.swatch) {
+    return (
+      <span
+        className="h-[18px] w-[18px] shrink-0 rounded-full border border-white/30 shadow-[0_0_14px_rgba(255,255,255,0.18)]"
+        style={{ background: row.swatch }}
+        aria-hidden="true"
+      />
+    )
+  }
   if (row.icon?.fileIcon) return <FileIcon path={row.icon.fileIcon} title={row.title} />
+  if (isEmojiGlyph(row.icon?.source)) return <GlyphIcon value={row.icon.source} />
   if (typeof row.icon?.source === 'string' && /^(?:data:image|https?:|file:)/i.test(row.icon.source)) {
     return <img src={row.icon.source} alt="" className="h-5 w-5 shrink-0" draggable={false} />
   }
@@ -377,9 +410,20 @@ function clientSideFilter(rows: ListRow[], query: string): ListRow[] {
   })
 }
 
+function isColorConversionCommand(commandName: string, title: string, navigationTitle: string): boolean {
+  const haystack = `${commandName} ${title} ${navigationTitle}`.toLowerCase()
+  return haystack.includes('convert') && haystack.includes('color')
+}
+
+async function copyRuntimeText(value: string | undefined): Promise<void> {
+  if (!value) return
+  await window.tezbar.clipboardWriteText(value)
+}
+
 export function ListRuntime({
   root,
   title,
+  commandName,
   onBack,
   onRunPrimaryAction,
   actions,
@@ -388,6 +432,7 @@ export function ListRuntime({
 }: {
   root: ExtensionRuntimeNode
   title: string
+  commandName: string
   onBack: () => void
   onRunPrimaryAction: (actionId?: string, formValues?: Record<string, unknown>) => void
   actions: ExtensionRuntimeAction[]
@@ -417,7 +462,10 @@ export function ListRuntime({
   )
   const hasServerSearch = onSearchTextChanged !== undefined && root.props?.__hasServerSearch === true
   const hasMore = root.props?.__hasMore === true
-  const shouldShowSearch = hasServerSearch || Boolean(searchAccessory) || !root.props?.navigationTitle
+  const isColorConversionSurface = isColorConversionCommand(commandName, title, navigationTitle)
+  const hasManySearchOptions = (searchAccessory?.options.length ?? 0) > 4
+  const shouldShowSearch =
+    isColorConversionSurface || hasServerSearch || Boolean(searchAccessory) || !root.props?.navigationTitle
 
   const [query, setQuery] = useState(
     typeof root.props?.searchText === 'string' ? root.props.searchText : '',
@@ -443,6 +491,15 @@ export function ListRuntime({
   }, [root.props?.searchText])
 
   useEffect(() => {
+    setAccessoryValue((current) => {
+      if (!searchAccessory || searchAccessory.options.length === 0) return ''
+      return searchAccessory.options.some((option) => option.value === current)
+        ? current
+        : searchAccessory.options[0]?.value ?? ''
+    })
+  }, [searchAccessory])
+
+  useEffect(() => {
     if (query === lastSentQuery.current) return
     if (debounceTimer.current) {
       clearTimeout(debounceTimer.current)
@@ -458,15 +515,32 @@ export function ListRuntime({
     }
   }, [query, onSearchTextChanged])
 
+  const colorConversionRows = useMemo<ListRow[]>(() => {
+    if (!isColorConversionSurface) return []
+    return buildColorConversionResults(query).map((result) => {
+      const copyText = result.action.type === 'copy-text' ? result.action.text : result.title
+      return {
+        id: `runtime:${result.id}`,
+        title: result.title,
+        subtitle: result.subtitle,
+        copyText,
+        swatch: copyText,
+      }
+    })
+  }, [isColorConversionSurface, query])
+
   const filteredRows = useMemo(() => {
+    if (colorConversionRows.length > 0) return colorConversionRows
     if (hasServerSearch) return rows
     return clientSideFilter(rows, query)
-  }, [hasServerSearch, rows, query])
+  }, [colorConversionRows, hasServerSearch, rows, query])
 
   const groupedSections = useMemo(() => groupBySection(filteredRows), [filteredRows])
   const selectedRow = filteredRows[selected]
   const selectedAction = actions.find((action) => selectedRow?.actionIds?.[0] === action.id)
+  const selectedActionLabel = selectedRow?.copyText ? 'Copy' : selectedAction?.title || 'Run'
   const hasDetails = filteredRows.some((row) => row.detail)
+  const usesEmojiGlyphs = filteredRows.some((row) => isEmojiGlyph(row.icon?.source))
 
   const requestMore = async (): Promise<void> => {
     if (!hasMore || loadingMoreRef.current) return
@@ -518,7 +592,12 @@ export function ListRuntime({
 
     if (e.key === 'Enter' && !e.repeat) {
       e.preventDefault()
-      const actionId = filteredRows[selected]?.actionIds?.[0]
+      const row = filteredRows[selected]
+      if (row?.copyText) {
+        void copyRuntimeText(row.copyText)
+        return
+      }
+      const actionId = row?.actionIds?.[0]
       if (actionId) onRunPrimaryAction(actionId)
       return
     }
@@ -538,6 +617,20 @@ export function ListRuntime({
   const isFirstTimePackageLoad =
     filteredRows.length === 0 &&
     emptyView?.title === 'Loading Packages'
+  const emptyTitle = isColorConversionSurface
+    ? hasQuery
+      ? 'No color formats'
+      : 'Enter a color'
+    : hasQuery
+      ? 'No matching applications'
+      : emptyView?.title || 'No list items'
+  const emptyDescription = isColorConversionSurface
+    ? hasQuery
+      ? 'Try HEX, RGB, RGBA, HSL, or HSLA.'
+      : 'Type a color value to convert it.'
+    : hasQuery
+      ? 'Try a different app name or keyword.'
+      : emptyView?.description || ''
 
   return (
     <div
@@ -548,7 +641,7 @@ export function ListRuntime({
         <ViewHeader title={navigationTitle} onBack={onBack} />
 
         {shouldShowSearch ? (
-          <div className="mt-2 flex items-center gap-2">
+          <div className={cx('mt-2 flex gap-2', hasManySearchOptions ? 'flex-col items-stretch' : 'items-center')}>
             <div className="min-w-0 flex-1">
               <input
                 ref={inputRef}
@@ -564,7 +657,12 @@ export function ListRuntime({
               />
             </div>
             {searchAccessory && searchAccessory.options.length > 0 ? (
-              <div className="flex shrink-0 items-center gap-1">
+              <div
+                className={cx(
+                  'flex min-w-0 max-w-full items-center gap-1 overflow-x-auto rounded-tezbar-field p-0.5 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden',
+                  hasManySearchOptions ? 'w-full' : 'shrink-0',
+                )}
+              >
                 {searchAccessory.options.map((option) => {
                   const active = accessoryValue === option.value
                   return (
@@ -580,10 +678,15 @@ export function ListRuntime({
                       }}
                       className={
                         active
-                          ? 'rounded-tezbar-chip bg-white/[0.12] px-2 py-1 text-[11px] font-medium text-ink-1 transition'
-                          : 'rounded-tezbar-chip px-2 py-1 text-[11px] text-ink-3 transition hover:bg-white/[0.06] hover:text-ink-1'
+                          ? 'shrink-0 rounded-tezbar-chip bg-white/[0.14] px-2.5 py-1.5 text-[11px] font-medium text-ink-1 transition'
+                          : 'shrink-0 rounded-tezbar-chip px-2.5 py-1.5 text-[11px] text-ink-3 transition hover:bg-white/[0.06] hover:text-ink-1'
                       }
                     >
+                      {isEmojiGlyph(option.icon) ? (
+                        <span className="mr-1.5 inline-grid h-4 w-4 place-items-center text-[13px] leading-none" aria-hidden="true">
+                          {option.icon}
+                        </span>
+                      ) : null}
                       {option.title}
                     </button>
                   )
@@ -603,12 +706,10 @@ export function ListRuntime({
           <div className="flex h-full items-center justify-center text-center">
             <div>
               <p className="text-[13px] text-ink-2">
-                {hasQuery ? 'No matching applications' : emptyView?.title || 'No list items'}
+                {emptyTitle}
               </p>
-              {hasQuery ? (
-                <p className="mt-1 text-[11px] text-ink-4">Try a different app name or keyword.</p>
-              ) : emptyView?.description ? (
-                <p className="mt-1 text-[11px] text-ink-4">{emptyView.description}</p>
+              {emptyDescription ? (
+                <p className="mt-1 text-[11px] text-ink-4">{emptyDescription}</p>
               ) : null}
               {isFirstTimePackageLoad ? (
                 <p className="mx-auto mt-3 max-w-sm text-[11px] leading-5 text-ink-3">
@@ -644,12 +745,21 @@ export function ListRuntime({
                             onMouseEnter={() => setSelected(globalIdx)}
                             onClick={() => {
                               setSelected(globalIdx)
-                              if (row.actionIds?.[0]) onRunPrimaryAction(row.actionIds[0])
+                              if (row.copyText) {
+                                void copyRuntimeText(row.copyText)
+                              } else if (row.actionIds?.[0]) {
+                                onRunPrimaryAction(row.actionIds[0])
+                              }
                             }}
-                            className={`w-full rounded-tezbar-row px-3 py-2.5 text-left transition ${globalIdx === selected ? 'bg-white/[0.16] text-ink-1' : 'text-ink-2 hover:bg-white/[0.06]'
-                              }`}
+                            className={cx(
+                              'w-full rounded-tezbar-row px-3 text-left transition',
+                              usesEmojiGlyphs ? 'py-2' : 'py-2.5',
+                              globalIdx === selected
+                                ? 'bg-white/[0.16] text-ink-1 shadow-[inset_0_1px_0_rgba(255,255,255,0.06)]'
+                                : 'text-ink-2 hover:bg-white/[0.06]',
+                            )}
                           >
-                            <span className="flex min-w-0 items-center gap-2.5">
+                            <span className={cx('flex min-w-0 items-center', usesEmojiGlyphs ? 'gap-3' : 'gap-2.5')}>
                               <RowIcon row={row} />
                               <span className="min-w-0 flex-1">
                                 <p className="truncate text-[13px] font-medium">{row.title}</p>
@@ -692,7 +802,7 @@ export function ListRuntime({
         </span>
         <HintBar>
           <Hint label="Select" keys={<><Kbd>↑</Kbd><Kbd>↓</Kbd></>} />
-          <Hint label={selectedAction?.title || 'Run'} keys={<Kbd>↵</Kbd>} />
+          <Hint label={selectedActionLabel} keys={<Kbd>↵</Kbd>} />
           <Hint label="Actions" keys={<><Kbd>⌘</Kbd><Kbd>K</Kbd></>} />
           <Hint label="Back" keys={<Kbd>Esc</Kbd>} />
         </HintBar>

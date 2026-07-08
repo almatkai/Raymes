@@ -5,6 +5,7 @@ export type CatalogMessage = { tone: 'success' | 'error'; text: string }
 export type ExtensionCatalogState = {
   query: string
   loading: boolean
+  loadRequestId: number | null
   installing: Record<string, number>
   store: ExtensionManifest[]
   installed: InstalledExtension[]
@@ -15,9 +16,14 @@ export type ExtensionCatalogState = {
 
 export type ExtensionCatalogAction =
   | { type: 'query'; query: string }
-  | { type: 'load-started' }
-  | { type: 'load-succeeded'; store: ExtensionManifest[]; installed: InstalledExtension[] }
-  | { type: 'load-failed'; message: string }
+  | { type: 'load-started'; requestId: number }
+  | {
+      type: 'load-succeeded'
+      requestId: number
+      store: ExtensionManifest[]
+      installed: InstalledExtension[]
+    }
+  | { type: 'load-failed'; requestId: number; message: string }
   | { type: 'selected'; id: string | null; follow: boolean }
   | { type: 'install-progress'; id: string; progress: number }
   | { type: 'install-started'; id: string }
@@ -27,6 +33,7 @@ export type ExtensionCatalogAction =
 export const INITIAL_EXTENSION_CATALOG_STATE: ExtensionCatalogState = {
   query: '',
   loading: false,
+  loadRequestId: null,
   installing: {},
   store: [],
   installed: [],
@@ -52,13 +59,22 @@ export function extensionCatalogReducer(
     case 'query':
       return { ...state, query: action.query }
     case 'load-started':
-      return { ...state, loading: true }
+      return { ...state, loading: true, loadRequestId: action.requestId }
     case 'load-succeeded':
-      return { ...state, loading: false, store: action.store, installed: action.installed }
-    case 'load-failed':
+      if (state.loadRequestId !== action.requestId) return state
       return {
         ...state,
         loading: false,
+        loadRequestId: null,
+        store: action.store,
+        installed: action.installed,
+      }
+    case 'load-failed':
+      if (state.loadRequestId !== action.requestId) return state
+      return {
+        ...state,
+        loading: false,
+        loadRequestId: null,
         message: { tone: 'error', text: action.message },
       }
     case 'selected':

@@ -58,7 +58,13 @@ export type FrankfurterLatestResponse = {
 export type GithubPollResult =
   | { status: 'authorization_pending' }
   | { status: 'slow_down' }
-  | { status: 'success'; access_token: string; refresh_token?: string; expires_in?: number }
+  | {
+    status: 'success'
+    access_token: string
+    refresh_token?: string
+    expires_in?: number
+    client_id: string
+  }
   | { status: 'error'; error: string }
 
 export type HotkeyUpdateResult = {
@@ -155,6 +161,7 @@ export type RaymesApi = {
     action: SearchAction,
     context?: SearchExecuteContext
   ) => Promise<SearchExecuteResult>
+  recordSearchActionUsage: (action: SearchAction, context?: SearchExecuteContext) => Promise<void>
   runAiAction: (payload: {
     instruction: string
     selectedText?: string
@@ -187,7 +194,7 @@ export type RaymesApi = {
   getWindowZoomFactor: () => number
   setWindowContentHeight: (height: number, zoomFactor: number) => Promise<void>
   openExternalUrl: (url: string) => Promise<void>
-  githubDeviceStart: (clientId: string) => Promise<{
+  githubDeviceStart: (clientId?: string) => Promise<{
     device_code: string
     user_code: string
     verification_uri: string
@@ -268,7 +275,7 @@ export type RaymesApi = {
   onQuickNoteSaveShortcut: (listener: () => void) => () => void
   /** Fired from the top-bar tray menu to open a built-in Tezbar surface. */
   onAppSurfaceOpen: (
-    listener: (surface: 'command' | 'settings' | 'clipboard') => void
+    listener: (surface: 'command' | 'settings' | 'clipboard' | 'extensions') => void
   ) => () => void
   /** Kick off a pi-backed agent run. Events stream via `onAgentEvent`. */
   agentRun: (
@@ -297,5 +304,70 @@ export type RaymesApi = {
   chatUpdateTitle: (id: string, title: string) => Promise<{ ok: boolean }>
   chatDelete: (id: string) => Promise<{ ok: boolean }>
   chatClear: () => Promise<{ ok: boolean }>
+  /** Open extensions store surface in the main window. */
+  openExtensionStore: () => Promise<boolean>
+  /** Get installed extensions with their commands and preference schema. */
+  getInstalledExtensionsSettingsSchema: () => Promise<
+    Array<{
+      extName: string
+      title: string
+      description: string
+      owner: string
+      iconDataUrl?: string
+      preferences: Array<{
+        scope: 'extension' | 'command'
+        name: string
+        title?: string
+        label?: string
+        description?: string
+        placeholder?: string
+        required?: boolean
+        type?: string
+        default?: unknown
+        data?: Array<{ title?: string; value?: string }>
+      }>
+      commands: Array<{
+        name: string
+        title: string
+        description: string
+        mode: string
+        interval?: string
+        disabledByDefault?: boolean
+        preferences: Array<{
+          scope: 'extension' | 'command'
+          name: string
+          title?: string
+          label?: string
+          description?: string
+          placeholder?: string
+          required?: boolean
+          type?: string
+          default?: unknown
+          data?: Array<{ title?: string; value?: string }>
+        }>
+      }>
+    }>
+  >
+  /** Update a command's global hotkey (Electron accelerator string). */
+  updateCommandHotkey: (
+    commandId: string,
+    hotkey: string
+  ) => Promise<{ ok: boolean; error?: string }>
+  /** Enable or disable a command. */
+  toggleCommandEnabled: (commandId: string, enabled: boolean) => Promise<boolean>
+  /** Get persisted settings (command hotkeys, aliases, disabled commands). */
+  getSettings: () => Promise<{
+    commandHotkeys: Record<string, string>
+    commandAliases: Record<string, string>
+    disabledCommands: Record<string, boolean>
+  }>
+  /** Save settings patch (aliases, etc.). */
+  saveSettings: (patch: {
+    commandAliases?: Record<string, string>
+  }) => Promise<{ ok: boolean }>
+  /** Fired when a command is triggered via its global hotkey (view mode only). */
+  onRunExtensionCommandFromHotkey: (
+    listener: (payload: { extensionId: string; commandName: string }) => void
+  ) => () => void
   appQuit: () => Promise<void>
 }

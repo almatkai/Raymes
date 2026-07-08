@@ -1,24 +1,44 @@
 import AppKit
 
 final class AppDelegate: NSObject, NSApplicationDelegate {
-    func applicationDidFinishLaunching(_ notification: Notification) {
-        NSApp.activate(ignoringOtherApps: true)
+    private var sampler: NSColorSampler?
 
-        let sampler = NSColorSampler()
-        sampler.show { selectedColor in
-            if let color = selectedColor?.usingColorSpace(.sRGB) {
-                let json = "{\"red\":\(color.redComponent),\"green\":\(color.greenComponent),\"blue\":\(color.blueComponent),\"alpha\":\(color.alphaComponent),\"colorSpace\":\"srgb\"}"
-                FileHandle.standardOutput.write(json.data(using: .utf8)!)
-            } else {
-                FileHandle.standardOutput.write("null".data(using: .utf8)!)
+    func applicationDidFinishLaunching(_ notification: Notification) {
+        DispatchQueue.main.async {
+            NSApp.activate(ignoringOtherApps: true)
+
+            self.sampler = NSColorSampler()
+            self.sampler?.show { selectedColor in
+                defer {
+                    self.sampler = nil
+                    NSApplication.shared.terminate(nil)
+                }
+
+                guard let color = selectedColor?.usingColorSpace(.sRGB) else {
+                    FileHandle.standardOutput.write("null".data(using: .utf8)!)
+                    return
+                }
+
+                let payload: [String: Any] = [
+                    "red": color.redComponent,
+                    "green": color.greenComponent,
+                    "blue": color.blueComponent,
+                    "alpha": color.alphaComponent,
+                    "colorSpace": "srgb",
+                ]
+
+                if let data = try? JSONSerialization.data(withJSONObject: payload) {
+                    FileHandle.standardOutput.write(data)
+                } else {
+                    FileHandle.standardOutput.write("null".data(using: .utf8)!)
+                }
             }
-            NSApplication.shared.terminate(nil)
         }
     }
 }
 
 let app = NSApplication.shared
+app.setActivationPolicy(.accessory)
 let delegate = AppDelegate()
 app.delegate = delegate
-app.setActivationPolicy(.accessory)
 app.run()

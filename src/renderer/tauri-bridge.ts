@@ -141,6 +141,8 @@ export async function initTauriBridge(): Promise<void> {
     removeNamedPort: (id: string) => callBackend('port-manager:named:remove', id),
     executeSearchAction: (action: any, context?: any) =>
       callBackend('search:execute', { action, context }),
+    recordSearchActionUsage: (action: any, context?: any) =>
+      callBackend('search:record-usage', { action, context }),
     runAiAction: (payload: any) => callBackend('ai:action', payload),
 
     voiceSpeak: (text: string) => callBackend('voice:tts:speak', { text }),
@@ -180,7 +182,7 @@ export async function initTauriBridge(): Promise<void> {
       invoke('window_set_content_height', { height, zoomFactor }),
     openExternalUrl: (url: string) => callBackend('open-external-url', url),
 
-    githubDeviceStart: (clientId: string) => callBackend('github-device-start', clientId),
+    githubDeviceStart: (clientId?: string) => callBackend('github-device-start', clientId),
     githubDevicePoll: () => callBackend('github-device-poll'),
     githubDeviceCancel: () => callBackend('github-device-cancel'),
 
@@ -283,7 +285,9 @@ export async function initTauriBridge(): Promise<void> {
       setupEventListener('terminal:exit', listener),
     onQuickNoteSaveShortcut: (listener: () => void) =>
       setupEventListener('notes:quick-save-shortcut', listener),
-    onAppSurfaceOpen: (listener: (surface: 'command' | 'settings' | 'clipboard') => void) =>
+    onAppSurfaceOpen: (
+      listener: (surface: 'command' | 'settings' | 'clipboard' | 'extensions') => void
+    ) =>
       setupEventListener('app:open-surface', listener),
     onAgentEvent: (listener: (event: any) => void) => setupEventListener('agent:event', listener),
     onExtensionInstallProgress: (listener: (payload: any) => void) =>
@@ -312,6 +316,16 @@ export async function initTauriBridge(): Promise<void> {
       return `data:image/png;base64,${base64}`
     },
     isPhysicalKeyDown: (key: string) => invoke('is_physical_key_down', { key }),
+    openExtensionStore: () => invoke('open_extensions_window'),
+    getInstalledExtensionsSettingsSchema: () =>
+      callBackend('get-installed-extensions-settings-schema'),
+    updateCommandHotkey: (commandId: string, hotkey: string) =>
+      callBackend('update-command-hotkey', commandId, hotkey),
+    toggleCommandEnabled: (commandId: string, enabled: boolean) =>
+      callBackend('toggle-command-enabled', commandId, enabled),
+    getSettings: () => callBackend('get-settings'),
+    saveSettings: (patch: unknown) => callBackend('save-settings', patch),
+    onRunExtensionCommandFromHotkey: () => () => {},
   }
 
   window.tezbar = tezbar

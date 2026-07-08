@@ -5,12 +5,14 @@ import {
   globalShortcut,
   ipcMain,
   Menu,
+  type Display,
   type MenuItemConstructorOptions,
   nativeImage,
   screen,
   session,
   Tray,
 } from 'electron'
+import { execFileSync, execSync } from 'node:child_process'
 import { join } from 'node:path'
 import { existsSync } from 'node:fs'
 
@@ -35,7 +37,6 @@ process.on('uncaughtException', (error) => {
 function fixPathSync(): void {
   if (process.platform === 'win32') return
   try {
-    const { execSync } = require('node:child_process')
     const stdout = execSync('bash -lc "echo -n \\$PATH"', {
       encoding: 'utf8',
       timeout: 2000,
@@ -67,8 +68,17 @@ import {
   getRaymesHotkey,
   getUiStateRetentionMs,
   setRaymesHotkey,
+  getCommandHotkeys,
+  setCommandHotkeys,
+  getDisabledCommands,
+  getPersistedWindowPosition,
+  getPersistedWindowPositionForDisplay,
+  setPersistedWindowPositionForDisplay,
+  type PersistedWindowPosition,
 } from './llm/configStore'
 import { registerIpcHandlers, shutdownIpcHandlers } from './ipc'
+import { runExtensionCommand } from './extension-runner'
+import { getInstalledExtensionsSettingsSchema } from './extension-builder'
 import { startClipboardWatcher, stopClipboardWatcher } from './search/providers/clipboardProvider'
 import {
   WINDOW_MAX_HEIGHT,
@@ -79,7 +89,6 @@ import {
 
 import { isPhysicalKeyDown } from './bridge'
 import { shouldSuppressBlurHide } from './windowState'
-import { getPersistedWindowPosition, setPersistedWindowPosition } from './llm/configStore'
 import {
   cleanupCenterOverlay,
   hideCenterOverlay,
@@ -93,7 +102,7 @@ let tray: Tray | null = null
 let commandBarVisible = false
 let isAppQuitting = false
 let raymesHotkey = getRaymesHotkey()
-type AppSurface = 'command' | 'settings' | 'clipboard'
+type AppSurface = 'command' | 'settings' | 'clipboard' | 'extensions'
 /** Set when the palette is hidden; used to decide whether to reset renderer UI on reopen. */
 let lastPaletteHideAt: number | null = null
 /** Grace period after showing — ignore transient blur events (macOS process-type transforms). */
@@ -251,8 +260,7 @@ function scheduleWindowDragFinalize(win: BrowserWindow): void {
   dragFinalizeTimer = setTimeout(() => {
     dragFinalizeTimer = null
     if (dragSessionActive || win.isDestroyed() || !isMouseDown) return
-    const [curX, curY] = win.getPosition()
-    setPersistedWindowPosition({ x: curX, y: curY })
+    persistCurrentWindowPosition(win)
   }, 900)
 }
 
@@ -287,8 +295,7 @@ function stopWindowDragMonitoring(win: BrowserWindow): void {
   sendWindowSnapGuides(win, { visible: false, active: false })
   hideCenterOverlay()
   if (!win.isDestroyed()) {
-    const [curX, curY] = win.getPosition()
-    setPersistedWindowPosition({ x: curX, y: curY })
+    persistCurrentWindowPosition(win)
   }
 }
 
@@ -538,24 +545,147 @@ function isPaletteUiStale(lastHideAt: number | null, ttlMs: number): boolean {
 
 let isProgrammaticMove = false
 
+function getDisplayStorageKey(display: Display): string {
+  const { bounds, scaleFactor } = display
+  return [display.id, bounds.width, bounds.height, scaleFactor].join(':')
+}
+
+type WindowRect = { x: number; y: number; width: number; height: number }
+
+function getDisplayForWindowRect(rect: WindowRect): Display {
+  return screen.getDisplayNearestPoint({
+    x: rect.x + Math.floor(rect.width / 2),
+    y: rect.y + Math.floor(rect.height / 2),
+  })
+}
+
+function parseActiveWindowRect(value: string): WindowRect | null {
+  const [rawX, rawY, rawWidth, rawHeight] = value
+    .trim()
+    .split(',')
+    .map((part) => Number(part.trim()))
+  if (
+    !Number.isFinite(rawX) ||
+    !Number.isFinite(rawY) ||
+    !Number.isFinite(rawWidth) ||
+    !Number.isFinite(rawHeight) ||
+    rawWidth <= 0 ||
+    rawHeight <= 0
+  ) {
+    return null
+  }
+  return {
+    x: Math.round(rawX),
+    y: Math.round(rawY),
+    width: Math.round(rawWidth),
+    height: Math.round(rawHeight),
+  }
+}
+
+function getDisplayForFrontmostMacWindow(): Display | null {
+  if (process.platform !== 'darwin') return null
+
+  try {
+    const script = [
+      'tell application "System Events"',
+      'set frontProcess to first application process whose frontmost is true',
+      'if (count of windows of frontProcess) is 0 then return ""',
+      'set frontWindow to first window of frontProcess',
+      'set windowPosition to position of frontWindow',
+      'set windowSize to size of frontWindow',
+      'return (item 1 of windowPosition as integer) & "," & (item 2 of windowPosition as integer) & "," & (item 1 of windowSize as integer) & "," & (item 2 of windowSize as integer)',
+      'end tell',
+    ]
+    const output = execFileSync('osascript', script.flatMap((line) => ['-e', line]), {
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'ignore'],
+      timeout: 500,
+    })
+    const rect = parseActiveWindowRect(output)
+    return rect ? getDisplayForWindowRect(rect) : null
+  } catch {
+    return null
+  }
+}
+
+function getActiveDisplay(): Display {
+  const focusedWindow = BrowserWindow.getFocusedWindow()
+  if (focusedWindow && !focusedWindow.isDestroyed()) {
+    return getDisplayForWindowRect(focusedWindow.getBounds())
+  }
+
+  const frontmostDisplay = getDisplayForFrontmostMacWindow()
+  if (frontmostDisplay) return frontmostDisplay
+
+  const cursor = screen.getCursorScreenPoint()
+  return screen.getDisplayNearestPoint(cursor)
+}
+
+function getWindowPlacementHeight(win: BrowserWindow): number {
+  const [, curH] = win.getContentSize()
+  return Math.max(WINDOW_MIN_HEIGHT, curH || WINDOW_MAX_HEIGHT)
+}
+
+function isPositionOnDisplay(pos: PersistedWindowPosition, display: Display): boolean {
+  const { bounds } = display
+  return (
+    pos.x >= bounds.x &&
+    pos.x < bounds.x + bounds.width &&
+    pos.y >= bounds.y &&
+    pos.y < bounds.y + bounds.height
+  )
+}
+
+function clampWindowPositionToDisplay(
+  pos: PersistedWindowPosition,
+  display: Display,
+  windowHeight: number
+): PersistedWindowPosition {
+  const { workArea } = display
+  const maxX = workArea.x + Math.max(0, workArea.width - WINDOW_WIDTH)
+  const maxY = workArea.y + Math.max(0, workArea.height - windowHeight)
+  return {
+    x: Math.min(Math.max(Math.round(pos.x), workArea.x), maxX),
+    y: Math.min(Math.max(Math.round(pos.y), workArea.y), maxY),
+  }
+}
+
+function persistCurrentWindowPosition(win: BrowserWindow): void {
+  if (win.isDestroyed()) return
+  const bounds = win.getBounds()
+  const display = screen.getDisplayNearestPoint({
+    x: bounds.x + Math.floor(bounds.width / 2),
+    y: bounds.y + Math.floor(bounds.height / 2),
+  })
+  setPersistedWindowPositionForDisplay(getDisplayStorageKey(display), {
+    x: bounds.x,
+    y: bounds.y,
+  })
+}
+
 function placeWindow(win: BrowserWindow): void {
   isProgrammaticMove = true
-  const cursor = screen.getCursorScreenPoint()
-  const activeDisplay = screen.getDisplayNearestPoint(cursor)
+  const activeDisplay = getActiveDisplay()
+  const contentH = getWindowPlacementHeight(win)
+  const activeDisplayKey = getDisplayStorageKey(activeDisplay)
+  const persistedForDisplay = getPersistedWindowPositionForDisplay(activeDisplayKey)
+  if (persistedForDisplay) {
+    const pos = clampWindowPositionToDisplay(persistedForDisplay, activeDisplay, contentH)
+    win.setBounds({ x: pos.x, y: pos.y, width: WINDOW_WIDTH, height: contentH })
+    setTimeout(() => {
+      isProgrammaticMove = false
+    }, 100)
+    return
+  }
+
   const persisted = getPersistedWindowPosition()
   if (persisted) {
-    const displays = screen.getAllDisplays()
-    const persistedDisplay = displays.find((display) => {
-      const bounds = display.bounds
-      return (
-        persisted.x >= bounds.x &&
-        persisted.x < bounds.x + bounds.width &&
-        persisted.y >= bounds.y &&
-        persisted.y < bounds.y + bounds.height
-      )
-    })
+    const persistedDisplay = screen.getAllDisplays().find((display) =>
+      isPositionOnDisplay(persisted, display)
+    )
     if (persistedDisplay?.id === activeDisplay.id) {
-      win.setPosition(persisted.x, persisted.y)
+      const pos = clampWindowPositionToDisplay(persisted, activeDisplay, contentH)
+      win.setBounds({ x: pos.x, y: pos.y, width: WINDOW_WIDTH, height: contentH })
       setTimeout(() => {
         isProgrammaticMove = false
       }, 100)
@@ -564,8 +694,6 @@ function placeWindow(win: BrowserWindow): void {
   }
 
   const { width, height, x, y } = activeDisplay.workArea
-  const [, curH] = win.getContentSize()
-  const contentH = Math.max(WINDOW_MIN_HEIGHT, curH || WINDOW_MAX_HEIGHT)
   const winX = x + Math.floor((width - WINDOW_WIDTH) / 2)
   const winY = y + Math.floor(height * WINDOW_TOP_FACTOR)
   win.setBounds({ x: winX, y: winY, width: WINDOW_WIDTH, height: contentH })
@@ -639,6 +767,7 @@ function createWindow(): void {
     show: false,
     frame: false,
     resizable: false,
+    movable: true,
     minimizable: false,
     maximizable: false,
     fullscreenable: false,
@@ -974,6 +1103,112 @@ function updateRaymesHotkey(accelerator: string): {
   return { ok: true, accelerator: next }
 }
 
+async function executeCommandById(commandId: string): Promise<void> {
+  const parts = commandId.split(':')
+  if (parts.length < 3 || parts[0] !== 'extcmd') {
+    console.error(`[Hotkeys] Invalid extension command ID: ${commandId}`)
+    return
+  }
+  const extensionId = parts[1]
+  const commandName = parts[2]
+
+  // Check if command is disabled
+  const disabled = getDisabledCommands()
+  if (disabled[commandId]) {
+    console.log(`[Hotkeys] Command ${commandId} is disabled, ignoring hotkey`)
+    return
+  }
+
+  // Look up command in settings schema to see its mode
+  let mode = 'no-view'
+  try {
+    const schema = getInstalledExtensionsSettingsSchema()
+    const extSchema = schema.find((e) => e.extName === extensionId)
+    const cmdSchema = extSchema?.commands.find((c) => c.name === commandName)
+    if (cmdSchema) {
+      mode = cmdSchema.mode
+    }
+  } catch (err) {
+    console.error(`[Hotkeys] Error checking command mode:`, err)
+  }
+
+  if (mode === 'view') {
+    // Show launcher window and notify renderer to run command
+    showCommandBar()
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.webContents.send('run-extension-command-from-hotkey', {
+        extensionId,
+        commandName,
+      })
+    }
+  } else {
+    // Run in background directly
+    try {
+      console.log(`[Hotkeys] Running command ${commandId} in background`)
+      await runExtensionCommand({ extensionId, commandName })
+    } catch (err) {
+      console.error(`[Hotkeys] Background run error:`, err)
+    }
+  }
+}
+
+function registerCommandHotkey(commandId: string, hotkey: string): boolean {
+  try {
+    const success = globalShortcut.register(hotkey, async () => {
+      await executeCommandById(commandId)
+    })
+    if (!success) {
+      console.warn(`[Hotkeys] Failed to register global shortcut ${hotkey} for ${commandId}`)
+    }
+    return success
+  } catch (err) {
+    console.error(`[Hotkeys] Error registering global shortcut ${hotkey} for ${commandId}:`, err)
+    return false
+  }
+}
+
+function updateCommandHotkey(commandId: string, hotkey: string): { ok: boolean; error?: string } {
+  const hotkeys = { ...getCommandHotkeys() }
+  const oldHotkey = hotkeys[commandId]
+
+  // Unregister old hotkey
+  if (oldHotkey) {
+    try {
+      globalShortcut.unregister(oldHotkey)
+    } catch {}
+  }
+
+  if (hotkey) {
+    // Check if new hotkey is already used by Raymes itself
+    if (hotkey.toLowerCase() === raymesHotkey.toLowerCase()) {
+      return { ok: false, error: 'This shortcut is reserved for opening Raymes.' }
+    }
+    // Check if duplicate with other command hotkeys
+    for (const [otherCommandId, otherHotkey] of Object.entries(hotkeys)) {
+      if (otherCommandId === commandId) continue
+      if (otherHotkey.toLowerCase() === hotkey.toLowerCase()) {
+        return { ok: false, error: 'This shortcut is already assigned to another command.' }
+      }
+    }
+
+    // Register new one
+    const success = registerCommandHotkey(commandId, hotkey)
+    if (!success) {
+      // Try to re-register the old one
+      if (oldHotkey) {
+        registerCommandHotkey(commandId, oldHotkey)
+      }
+      return { ok: false, error: 'That shortcut is unavailable. It may already be used by another app.' }
+    }
+    hotkeys[commandId] = hotkey
+  } else {
+    delete hotkeys[commandId]
+  }
+
+  setCommandHotkeys(hotkeys)
+  return { ok: true }
+}
+
 function registerHotkey(): void {
   let okSpace = registerRaymesHotkey(raymesHotkey)
   if (!okSpace && raymesHotkey !== DEFAULT_RAYMES_HOTKEY) {
@@ -996,6 +1231,14 @@ function registerHotkey(): void {
   }
   if (!okEscape) {
     console.warn('Failed to register global shortcut CommandOrControl+Escape (close window)')
+  }
+
+  // Load and register extension command hotkeys
+  const commandHotkeys = getCommandHotkeys()
+  for (const [commandId, hotkey] of Object.entries(commandHotkeys)) {
+    if (hotkey) {
+      registerCommandHotkey(commandId, hotkey)
+    }
   }
 }
 
@@ -1029,6 +1272,8 @@ app.whenReady().then(() => {
     startWindowDragMonitoring,
     stopWindowDragMonitoring,
     updateRaymesHotkey,
+    updateCommandHotkey,
+    openAppSurface,
   })
   ipcMain.handle('settings:open-window', async () => {
     openSettingsWindow()

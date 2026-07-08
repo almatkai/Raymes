@@ -7017,6 +7017,33 @@ function addAgentAlwaysAllowedCommand(command) {
     )
   });
 }
+function getCommandHotkeys() {
+  const value = readRawConfig().commandHotkeys;
+  if (value && typeof value === "object" && !Array.isArray(value)) {
+    return value;
+  }
+  return {};
+}
+function getCommandAliases() {
+  const value = readRawConfig().commandAliases;
+  if (value && typeof value === "object" && !Array.isArray(value)) {
+    return value;
+  }
+  return {};
+}
+function setCommandAliases(aliases) {
+  writeConfigPatch({ commandAliases: aliases });
+}
+function getDisabledCommands() {
+  const value = readRawConfig().disabledCommands;
+  if (value && typeof value === "object" && !Array.isArray(value)) {
+    return value;
+  }
+  return {};
+}
+function setDisabledCommands(disabled) {
+  writeConfigPatch({ disabledCommands: disabled });
+}
 var import_node_fs8, import_node_os4, import_node_path8, OPENRAY_CONFIG_DIR, OPENRAY_CONFIG_PATH, configCache, writeTimeout;
 var init_configStore = __esm({
   "src/main/llm/configStore.ts"() {
@@ -7035,10 +7062,18 @@ var init_configStore = __esm({
 function clearDeviceSession() {
   deviceSession = null;
 }
+function resolveGithubOAuthClientId(clientId) {
+  const trimmed = clientId?.trim();
+  return trimmed || DEFAULT_GITHUB_COPILOT_CLIENT_ID;
+}
+function getObjectRecord(value) {
+  return value && typeof value === "object" && !Array.isArray(value) ? value : {};
+}
 async function startGithubDeviceFlow(clientId) {
+  const resolvedClientId = resolveGithubOAuthClientId(clientId);
   const body = new URLSearchParams({
-    client_id: clientId,
-    scope: "read:user user:email"
+    client_id: resolvedClientId,
+    scope: GITHUB_COPILOT_OAUTH_SCOPE
   });
   const res = await fetch("https://github.com/login/device/code", {
     method: "POST",
@@ -7059,7 +7094,7 @@ async function startGithubDeviceFlow(clientId) {
   deviceSession = {
     device_code: json.device_code,
     interval: Math.max(5, json.interval ?? 5),
-    client_id: clientId
+    client_id: resolvedClientId
   };
   return json;
 }
@@ -7098,12 +7133,13 @@ async function pollGithubDeviceFlow() {
   }
   const refresh_token = typeof json.refresh_token === "string" ? json.refresh_token : void 0;
   const expires_in = typeof json.expires_in === "number" ? json.expires_in : void 0;
+  const client_id = deviceSession.client_id;
   deviceSession = null;
-  return { status: "success", access_token, refresh_token, expires_in };
+  return { status: "success", access_token, refresh_token, expires_in, client_id };
 }
 async function refreshGithubAccessToken(refreshToken, clientId, signal) {
   const body = new URLSearchParams({
-    client_id: clientId,
+    client_id: resolveGithubOAuthClientId(clientId),
     grant_type: "refresh_token",
     refresh_token: refreshToken
   });
@@ -7131,13 +7167,34 @@ async function refreshGithubAccessToken(refreshToken, clientId, signal) {
     expires_in: typeof json.expires_in === "number" ? json.expires_in : void 0
   };
 }
-function persistCopilotTokens(accessToken, refreshToken, expiresInSec) {
-  const patch = {
+function persistCopilotTokens(accessToken, refreshToken, expiresInSec, clientId) {
+  const raw = readRawConfig();
+  const providerConfigs = getObjectRecord(raw.providerConfigs);
+  const copilotConfig = getObjectRecord(providerConfigs.copilot);
+  const nextCopilotConfig = {
+    ...copilotConfig,
     copilotGithubToken: accessToken
   };
-  if (refreshToken) patch.copilotRefreshToken = refreshToken;
+  const trimmedClientId = clientId?.trim();
+  if (trimmedClientId) {
+    nextCopilotConfig.githubOAuthClientId = trimmedClientId;
+  }
+  const patch = {
+    copilotGithubToken: accessToken,
+    providerConfigs: {
+      ...providerConfigs,
+      copilot: nextCopilotConfig
+    }
+  };
+  if (trimmedClientId) patch.githubOAuthClientId = trimmedClientId;
+  if (refreshToken) {
+    patch.copilotRefreshToken = refreshToken;
+    nextCopilotConfig.copilotRefreshToken = refreshToken;
+  }
   if (expiresInSec !== void 0) {
-    patch.copilotExpiresAt = Date.now() + expiresInSec * 1e3;
+    const expiresAt = Date.now() + expiresInSec * 1e3;
+    patch.copilotExpiresAt = expiresAt;
+    nextCopilotConfig.copilotExpiresAt = expiresAt;
   }
   writeConfigPatch(patch);
 }
@@ -7158,12 +7215,14 @@ async function copilotApiPing(token) {
     return false;
   }
 }
-var COPILOT_API, deviceSession;
+var COPILOT_API, DEFAULT_GITHUB_COPILOT_CLIENT_ID, GITHUB_COPILOT_OAUTH_SCOPE, deviceSession;
 var init_githubCopilotAuth = __esm({
   "src/main/llm/githubCopilotAuth.ts"() {
     "use strict";
     init_configStore();
     COPILOT_API = "https://api.githubcopilot.com";
+    DEFAULT_GITHUB_COPILOT_CLIENT_ID = "Iv1.b507a08c87ecfe98";
+    GITHUB_COPILOT_OAUTH_SCOPE = "repo workflow";
     deviceSession = null;
   }
 });
@@ -7293,7 +7352,7 @@ var init_copilot = __esm({
       }
       async refreshIfNeeded(signal) {
         const { access, refresh, expiresAt, clientId } = this.readTokens();
-        if (!refresh || !clientId) {
+        if (!refresh) {
           return access;
         }
         const stale = expiresAt > 0 && Date.now() > expiresAt - 12e4;
@@ -8075,7 +8134,7 @@ function configurePackagedEsbuildBinary() {
   }
   if (typeof process.resourcesPath !== "string" || !process.resourcesPath) return;
   const packageArch = process.arch === "arm64" ? "darwin-arm64" : "darwin-x64";
-  const binaryPath = (0, import_node_path11.join)(
+  const binaryPath = (0, import_node_path9.join)(
     process.resourcesPath,
     "app.asar.unpacked",
     "node_modules",
@@ -8084,970 +8143,17 @@ function configurePackagedEsbuildBinary() {
     "bin",
     "esbuild"
   );
-  if ((0, import_node_fs11.existsSync)(binaryPath)) {
+  if ((0, import_node_fs9.existsSync)(binaryPath)) {
     process.env.ESBUILD_BINARY_PATH = binaryPath;
   }
 }
-var import_node_fs11, import_node_path11;
+var import_node_fs9, import_node_path9;
 var init_esbuild_runtime = __esm({
   "src/main/esbuild-runtime.ts"() {
     "use strict";
     init_electron_shim();
-    import_node_fs11 = require("node:fs");
-    import_node_path11 = require("node:path");
-  }
-});
-
-// src/main/extension-builder.ts
-var extension_builder_exports = {};
-__export(extension_builder_exports, {
-  buildAllCommands: () => buildAllCommands,
-  buildSingleCommand: () => buildSingleCommand,
-  discoverInstalledExtensionCommands: () => discoverInstalledExtensionCommands,
-  getExtensionBundle: () => getExtensionBundle,
-  getInstalledExtensionsSettingsSchema: () => getInstalledExtensionsSettingsSchema
-});
-function requireEsbuild() {
-  configurePackagedEsbuildBinary();
-  return require("esbuild");
-}
-function legacyCheerioInteropPlugin() {
-  return {
-    name: "legacy-cheerio-default-interop",
-    setup(build) {
-      build.onLoad({ filter: /\.[cm]?[jt]sx?$/ }, (args) => {
-        const source = fs.readFileSync(args.path, "utf8");
-        if (!/import\s+[A-Za-z_$][\w$]*\s+from\s+['"]cheerio['"]/.test(source)) return null;
-        const extension = path4.extname(args.path).toLowerCase();
-        const loader = extension.endsWith("x") ? extension.slice(1) : extension.slice(1) || "js";
-        return {
-          contents: source.replace(
-            /import\s+([A-Za-z_$][\w$]*)\s+from\s+(['"])cheerio\2/g,
-            "import * as $1 from $2cheerio$2"
-          ),
-          loader
-        };
-      });
-    }
-  };
-}
-function getManagedExtensionsDir() {
-  const dir = path4.join(app.getPath("userData"), "extensions");
-  if (!fs.existsSync(dir)) {
-    fs.mkdirSync(dir, { recursive: true });
-  }
-  return dir;
-}
-function getBuildDir(extPath) {
-  const dir = path4.join(extPath, ".sc-build");
-  if (!fs.existsSync(dir)) {
-    fs.mkdirSync(dir, { recursive: true });
-  }
-  return dir;
-}
-function expandHome(inputPath) {
-  const raw = String(inputPath || "").trim();
-  if (!raw) return "";
-  if (raw.startsWith("~/")) return path4.join(os.homedir(), raw.slice(2));
-  return raw;
-}
-function normalizeFsPath(inputPath) {
-  return path4.resolve(expandHome(inputPath));
-}
-function normalizeExtensionName(name) {
-  const raw = String(name || "").trim();
-  if (!raw) return "";
-  return raw.replace(/^@/, "").replace(/^raycast\./, "").replace(/[\\/]/g, "-");
-}
-function getConfiguredExtensionRoots() {
-  const settingsPaths = [];
-  const envPaths = String(process.env.SUPERCMD_EXTENSION_PATHS || "").split(path4.delimiter).map((value) => value.trim()).filter(Boolean);
-  const unique = /* @__PURE__ */ new Set();
-  for (const root of [
-    getManagedExtensionsDir(),
-    path4.join(getManagedExtensionsDir(), "packages"),
-    path4.join(app.getPath("userData"), "extension-registry", "packages"),
-    ...settingsPaths,
-    ...envPaths
-  ]) {
-    const normalized = normalizeFsPath(root);
-    if (!normalized) continue;
-    unique.add(normalized);
-  }
-  return [...unique];
-}
-function collectInstalledExtensions() {
-  const results = [];
-  const seen = /* @__PURE__ */ new Set();
-  const addIfValid = (extPath, sourceRoot, fallbackName) => {
-    const pkgPath = path4.join(extPath, "package.json");
-    if (!fs.existsSync(pkgPath)) return;
-    try {
-      if (!fs.statSync(extPath).isDirectory()) return;
-    } catch {
-      return;
-    }
-    const extName = normalizeExtensionName(fallbackName);
-    if (!extName) return;
-    const dedupeKey = extName.toLowerCase();
-    if (seen.has(dedupeKey)) return;
-    seen.add(dedupeKey);
-    results.push({ extName, extPath, sourceRoot });
-  };
-  for (const sourceRoot of getConfiguredExtensionRoots()) {
-    if (!fs.existsSync(sourceRoot)) continue;
-    const sourceRootPkg = path4.join(sourceRoot, "package.json");
-    if (fs.existsSync(sourceRootPkg)) {
-      addIfValid(sourceRoot, sourceRoot, path4.basename(sourceRoot));
-      continue;
-    }
-    let entries = [];
-    try {
-      entries = fs.readdirSync(sourceRoot);
-    } catch {
-      continue;
-    }
-    for (const entry of entries) {
-      addIfValid(path4.join(sourceRoot, entry), sourceRoot, entry);
-    }
-  }
-  return results;
-}
-function resolveInstalledExtensionPath(extName) {
-  const normalized = normalizeExtensionName(extName);
-  if (!normalized) return null;
-  const match = collectInstalledExtensions().find((entry) => entry.extName === normalized);
-  return match?.extPath || null;
-}
-function getExtensionIconDataUrl(extPath, iconFile) {
-  const candidates = [
-    path4.join(extPath, "assets", iconFile),
-    path4.join(extPath, iconFile)
-  ];
-  for (const p of candidates) {
-    if (!fs.existsSync(p)) continue;
-    try {
-      const ext = path4.extname(p).toLowerCase();
-      const data = fs.readFileSync(p);
-      if (data.length < 50) continue;
-      const mime = ext === ".svg" ? "image/svg+xml" : ext === ".jpg" || ext === ".jpeg" ? "image/jpeg" : "image/png";
-      return `data:${mime};base64,${data.toString("base64")}`;
-    } catch {
-    }
-  }
-  return void 0;
-}
-function resolvePlatformDefault(value) {
-  const platformKey = process.platform === "win32" ? "Windows" : "macOS";
-  if (value && typeof value === "object" && !Array.isArray(value) && (Object.prototype.hasOwnProperty.call(value, "macOS") || Object.prototype.hasOwnProperty.call(value, "Windows"))) {
-    if (Object.prototype.hasOwnProperty.call(value, platformKey)) {
-      return value[platformKey];
-    }
-    return value.macOS ?? value.Windows;
-  }
-  return value;
-}
-function normalizePreferenceSchema(pref, scope) {
-  if (!pref || typeof pref !== "object" || !pref.name) return null;
-  return {
-    scope,
-    name: String(pref.name),
-    title: pref.title,
-    label: pref.label,
-    description: pref.description,
-    placeholder: pref.placeholder,
-    required: Boolean(pref.required),
-    type: pref.type,
-    default: resolvePlatformDefault(pref.default),
-    data: Array.isArray(pref.data) ? pref.data : void 0
-  };
-}
-function discoverInstalledExtensionCommands() {
-  const results = [];
-  for (const source of collectInstalledExtensions()) {
-    const extPath = source.extPath;
-    const pkgPath = path4.join(extPath, "package.json");
-    const extName = source.extName;
-    try {
-      const pkg = JSON.parse(fs.readFileSync(pkgPath, "utf-8"));
-      if (!isManifestPlatformCompatible(pkg)) continue;
-      const iconDataUrl = getExtensionIconDataUrl(
-        extPath,
-        pkg.icon || "icon.png"
-      );
-      const ownerRaw = pkg.owner || pkg.author || "";
-      const owner = (typeof ownerRaw === "object" ? ownerRaw?.name || "" : String(ownerRaw || "")).trim();
-      for (const cmd of pkg.commands || []) {
-        if (!cmd.name) continue;
-        if (!isCommandPlatformCompatible(cmd)) continue;
-        results.push({
-          id: `ext-${extName}-${cmd.name}`,
-          title: cmd.title || cmd.name,
-          extensionTitle: pkg.title || extName,
-          extName,
-          cmdName: cmd.name,
-          owner: owner || void 0,
-          description: cmd.description || "",
-          mode: cmd.mode || "view",
-          interval: typeof cmd.interval === "string" ? cmd.interval : void 0,
-          disabledByDefault: Boolean(cmd.disabledByDefault),
-          commandArgumentDefinitions: Array.isArray(cmd.arguments) ? cmd.arguments.filter((arg) => arg && arg.name).map((arg) => ({
-            name: String(arg.name),
-            required: Boolean(arg.required),
-            type: arg.type,
-            placeholder: arg.placeholder,
-            title: arg.title,
-            data: Array.isArray(arg.data) ? arg.data : void 0
-          })) : [],
-          keywords: [
-            extName,
-            pkg.title || "",
-            cmd.name,
-            cmd.title || "",
-            cmd.description || ""
-          ].filter(Boolean).map((s) => s.toLowerCase()),
-          iconDataUrl
-        });
-      }
-    } catch {
-    }
-  }
-  return results;
-}
-function getInstalledExtensionsSettingsSchema() {
-  const results = [];
-  for (const source of collectInstalledExtensions()) {
-    const extPath = source.extPath;
-    const pkgPath = path4.join(extPath, "package.json");
-    const extName = source.extName;
-    try {
-      const pkg = JSON.parse(fs.readFileSync(pkgPath, "utf-8"));
-      if (!isManifestPlatformCompatible(pkg)) continue;
-      const iconDataUrl = getExtensionIconDataUrl(extPath, pkg.icon || "icon.png");
-      const ownerRaw = pkg.owner || pkg.author || "";
-      const owner = typeof ownerRaw === "object" ? ownerRaw.name || "" : String(ownerRaw || "");
-      const extensionPreferences = Array.isArray(pkg.preferences) ? pkg.preferences.map((pref) => normalizePreferenceSchema(pref, "extension")).filter(Boolean) : [];
-      const commands = Array.isArray(pkg.commands) ? pkg.commands.filter((cmd) => cmd && cmd.name && isCommandPlatformCompatible(cmd)).map((cmd) => ({
-        name: cmd.name,
-        title: cmd.title || cmd.name,
-        description: cmd.description || "",
-        mode: cmd.mode || "view",
-        interval: typeof cmd.interval === "string" ? cmd.interval : void 0,
-        disabledByDefault: Boolean(cmd.disabledByDefault),
-        preferences: Array.isArray(cmd.preferences) ? cmd.preferences.map((pref) => normalizePreferenceSchema(pref, "command")).filter(Boolean) : []
-      })) : [];
-      results.push({
-        extName,
-        title: pkg.title || extName,
-        description: pkg.description || "",
-        owner,
-        iconDataUrl,
-        preferences: extensionPreferences,
-        commands
-      });
-    } catch {
-    }
-  }
-  return results.sort((a, b) => a.title.localeCompare(b.title));
-}
-function getInstallableRuntimeDeps(pkg) {
-  const deps = {
-    ...pkg?.dependencies || {},
-    ...pkg?.optionalDependencies || {}
-  };
-  return Object.entries(deps).filter(([name]) => typeof name === "string" && !name.startsWith("@raycast/")).map(([name, version]) => `${name}@${String(version || "").trim()}`).filter((value) => {
-    const atIndex = value.lastIndexOf("@");
-    return atIndex > 0 && atIndex < value.length - 1;
-  });
-}
-function extensionRequiresNodeModules(pkg) {
-  return getInstallableRuntimeDeps(pkg).length > 0;
-}
-function parseJsonc(source) {
-  let out = "";
-  let i = 0;
-  const n = source.length;
-  while (i < n) {
-    const ch = source[i];
-    if (ch === '"') {
-      out += ch;
-      i++;
-      while (i < n) {
-        const c = source[i];
-        out += c;
-        i++;
-        if (c === "\\" && i < n) {
-          out += source[i];
-          i++;
-          continue;
-        }
-        if (c === '"') break;
-      }
-      continue;
-    }
-    if (ch === "/" && source[i + 1] === "/") {
-      i += 2;
-      while (i < n && source[i] !== "\n") i++;
-      continue;
-    }
-    if (ch === "/" && source[i + 1] === "*") {
-      i += 2;
-      while (i < n && !(source[i] === "*" && source[i + 1] === "/")) i++;
-      i += 2;
-      continue;
-    }
-    out += ch;
-    i++;
-  }
-  out = out.replace(/,(\s*[}\]])/g, "$1");
-  return JSON.parse(out);
-}
-function getExtensionCompilerOptions(extPath) {
-  const tsconfigPath = path4.join(extPath, "tsconfig.json");
-  if (!fs.existsSync(tsconfigPath)) return {};
-  try {
-    const parsed = parseJsonc(fs.readFileSync(tsconfigPath, "utf-8"));
-    const compilerOptions = parsed && typeof parsed === "object" && parsed.compilerOptions && typeof parsed.compilerOptions === "object" ? parsed.compilerOptions : {};
-    const options = {};
-    if (typeof compilerOptions.baseUrl === "string" && compilerOptions.baseUrl.trim()) {
-      options.baseUrl = compilerOptions.baseUrl;
-    }
-    if (compilerOptions.paths && typeof compilerOptions.paths === "object" && !Array.isArray(compilerOptions.paths)) {
-      options.paths = compilerOptions.paths;
-      if (!options.baseUrl) options.baseUrl = ".";
-    }
-    if (typeof compilerOptions.jsx === "string" && compilerOptions.jsx.trim()) {
-      options.jsx = compilerOptions.jsx;
-    }
-    if (typeof compilerOptions.jsxImportSource === "string" && compilerOptions.jsxImportSource.trim()) {
-      options.jsxImportSource = compilerOptions.jsxImportSource;
-    }
-    return options;
-  } catch (error) {
-    console.warn(`Failed to parse tsconfig for ${path4.basename(extPath)}:`, error?.message || error);
-    return {};
-  }
-}
-function getEsbuildTsconfigRaw(extPath) {
-  const extensionCompilerOptions = getExtensionCompilerOptions(extPath);
-  return JSON.stringify({
-    compilerOptions: {
-      target: "ES2020",
-      jsx: "react-jsx",
-      jsxImportSource: "react",
-      strict: false,
-      esModuleInterop: true,
-      moduleResolution: "node",
-      ...extensionCompilerOptions
-    }
-  });
-}
-function resolveEntryFile(extPath, cmd) {
-  const cmdName = String(cmd?.name || "").trim();
-  if (!cmdName) return null;
-  const srcDir = path4.join(extPath, "src");
-  const validExt = /\.(tsx?|jsx?)$/i;
-  const explicitEntry = typeof cmd?.path === "string" ? cmd.path : typeof cmd?.entrypoint === "string" ? cmd.entrypoint : typeof cmd?.entry === "string" ? cmd.entry : typeof cmd?.file === "string" ? cmd.file : typeof cmd?.source === "string" ? cmd.source : "";
-  const candidates = [
-    explicitEntry ? path4.join(extPath, explicitEntry) : "",
-    path4.join(srcDir, `${cmdName}.tsx`),
-    path4.join(srcDir, `${cmdName}.ts`),
-    path4.join(srcDir, `${cmdName}.jsx`),
-    path4.join(srcDir, `${cmdName}.js`),
-    path4.join(srcDir, cmdName, "index.tsx"),
-    path4.join(srcDir, cmdName, "index.ts"),
-    path4.join(srcDir, cmdName, "index.jsx"),
-    path4.join(srcDir, cmdName, "index.js"),
-    path4.join(srcDir, "commands", `${cmdName}.tsx`),
-    path4.join(srcDir, "commands", `${cmdName}.ts`),
-    path4.join(srcDir, "commands", `${cmdName}.jsx`),
-    path4.join(srcDir, "commands", `${cmdName}.js`)
-  ].filter(Boolean);
-  const found = candidates.find((p) => fs.existsSync(p));
-  if (found) return found;
-  if (!fs.existsSync(srcDir)) return null;
-  const stack = [srcDir];
-  const normalized = cmdName.toLowerCase();
-  while (stack.length > 0) {
-    const dir = stack.pop();
-    let entries = [];
-    try {
-      entries = fs.readdirSync(dir);
-    } catch {
-      continue;
-    }
-    for (const entry of entries) {
-      const full = path4.join(dir, entry);
-      let stat2;
-      try {
-        stat2 = fs.statSync(full);
-      } catch {
-        continue;
-      }
-      if (stat2.isDirectory()) {
-        stack.push(full);
-        continue;
-      }
-      if (!validExt.test(entry)) continue;
-      const base = path4.basename(entry, path4.extname(entry)).toLowerCase();
-      if (base === normalized) return full;
-    }
-  }
-  return null;
-}
-async function buildAllCommands(extName, extPathOverride) {
-  const extPath = extPathOverride ? normalizeFsPath(extPathOverride) : resolveInstalledExtensionPath(extName);
-  if (!extPath) {
-    console.error(`Extension path not found for ${extName}`);
-    return 0;
-  }
-  const pkgPath = path4.join(extPath, "package.json");
-  if (!fs.existsSync(pkgPath)) {
-    console.error(`No package.json found for extension ${extName}`);
-    return 0;
-  }
-  let commands;
-  let requiresNodeModules = false;
-  let manifestExternal = [];
-  try {
-    const pkg = JSON.parse(fs.readFileSync(pkgPath, "utf-8"));
-    if (!isManifestPlatformCompatible(pkg)) {
-      console.warn(`Skipping build for incompatible extension ${extName}`);
-      return 0;
-    }
-    commands = pkg.commands || [];
-    requiresNodeModules = extensionRequiresNodeModules(pkg);
-    manifestExternal = Array.isArray(pkg.external) ? pkg.external.filter((v) => typeof v === "string" && v.trim().length > 0) : [];
-  } catch {
-    return 0;
-  }
-  if (commands.length === 0) return 0;
-  const esbuild = requireEsbuild();
-  const extNodeModules = path4.join(extPath, "node_modules");
-  if (requiresNodeModules && !fs.existsSync(extNodeModules)) {
-    try {
-      const { installExtensionDeps: installExtensionDeps2 } = (init_extension_registry(), __toCommonJS(extension_registry_exports));
-      await installExtensionDeps2(extPath);
-    } catch (e) {
-      console.error(`Failed to install dependencies for ${extName}:`, e?.message || e);
-      return 0;
-    }
-    if (!fs.existsSync(extNodeModules)) {
-      console.error(`Dependencies missing for ${extName}: ${extNodeModules} not found`);
-      return 0;
-    }
-  }
-  const buildDir = getBuildDir(extPath);
-  try {
-    fs.rmSync(buildDir, { recursive: true, force: true });
-  } catch {
-  }
-  fs.mkdirSync(buildDir, { recursive: true });
-  let built = 0;
-  for (const cmd of commands) {
-    if (!cmd.name) continue;
-    if (!isCommandPlatformCompatible(cmd)) continue;
-    const entryFile = resolveEntryFile(extPath, cmd);
-    if (!entryFile) {
-      console.warn(`No entry file for ${extName}/${cmd.name}, skipping`);
-      continue;
-    }
-    const outFile = path4.join(buildDir, `${cmd.name}.js`);
-    fs.mkdirSync(path4.dirname(outFile), { recursive: true });
-    try {
-      console.log(`  Building ${extName}/${cmd.name}\u2026`);
-      await runEsbuildBuild(
-        esbuild,
-        {
-          entryPoints: [entryFile],
-          absWorkingDir: extPath,
-          bundle: true,
-          format: "cjs",
-          platform: "node",
-          conditions: ["require", "node"],
-          outfile: outFile,
-          plugins: [
-            legacyCheerioInteropPlugin(),
-            // Mark swift: imports as external so fakeRequire can handle them at runtime
-            {
-              name: "swift-external",
-              setup(build) {
-                build.onResolve({ filter: /^swift:/ }, (args) => ({
-                  path: args.path,
-                  external: true
-                }));
-              }
-            }
-          ],
-          external: [
-            // React — provided by the renderer at runtime
-            "react",
-            "react-dom",
-            "react-dom/*",
-            "react/jsx-runtime",
-            "react/jsx-dev-runtime",
-            // Raycast — provided by our shim
-            "@raycast/api",
-            "@raycast/utils",
-            // Native C++ addons — cannot be bundled, we stub them at runtime
-            "re2",
-            "better-sqlite3",
-            "fsevents",
-            // Cross-extension calls — not supported, stubbed
-            "raycast-cross-extension",
-            // Fetch libs — use runtime shims in renderer instead of bundling Node internals
-            "node-fetch",
-            "undici",
-            "undici/*",
-            // HTTP / file-download / archive packages — must be kept external so our renderer
-            // shim can intercept them and route file I/O through the main process (which has
-            // real filesystem access). Bundling them inline breaks binary downloads because the
-            // browser renderer cannot do streaming file writes or archive extraction natively.
-            "axios",
-            "tar",
-            "extract-zip",
-            "sha256-file",
-            // Respect extension-defined externals from manifest
-            ...manifestExternal,
-            // Node.js built-ins — stubbed at runtime in the renderer
-            ...nodeBuiltins
-          ],
-          nodePaths: fs.existsSync(extNodeModules) ? [extNodeModules] : [],
-          target: "es2020",
-          jsx: "automatic",
-          jsxImportSource: "react",
-          tsconfigRaw: getEsbuildTsconfigRaw(extPath),
-          define: {
-            "process.env.NODE_ENV": '"production"',
-            "global": "globalThis"
-          },
-          logLevel: "warning"
-        },
-        extPath,
-        `${extName}/${cmd.name}`
-      );
-      if (fs.existsSync(outFile)) {
-        built++;
-      }
-    } catch (e) {
-      console.error(`  esbuild failed for ${extName}/${cmd.name}:`, e);
-    }
-  }
-  console.log(`Built ${built}/${commands.length} commands for ${extName}`);
-  return built;
-}
-function parsePreferences(pkg, cmdName) {
-  const extensionPrefs = {};
-  const commandPrefs = {};
-  const definitions = [];
-  for (const pref of pkg.preferences || []) {
-    if (!pref.name) continue;
-    const resolvedDefault = resolvePlatformDefault(pref.default);
-    definitions.push({
-      scope: "extension",
-      name: pref.name,
-      title: pref.title,
-      description: pref.description,
-      placeholder: pref.placeholder,
-      required: Boolean(pref.required),
-      type: pref.type,
-      default: resolvedDefault,
-      data: Array.isArray(pref.data) ? pref.data : void 0
-    });
-    if (resolvedDefault !== void 0) {
-      extensionPrefs[pref.name] = resolvedDefault;
-    } else if (pref.type === "checkbox") {
-      extensionPrefs[pref.name] = false;
-    } else if (pref.type === "textfield" || pref.type === "password") {
-      extensionPrefs[pref.name] = "";
-    } else if (pref.type === "dropdown") {
-      extensionPrefs[pref.name] = pref.data?.[0]?.value ?? "";
-    }
-  }
-  const cmd = (pkg.commands || []).find((c) => c.name === cmdName);
-  if (cmd?.preferences) {
-    for (const pref of cmd.preferences) {
-      if (!pref.name) continue;
-      const resolvedDefault = resolvePlatformDefault(pref.default);
-      definitions.push({
-        scope: "command",
-        name: pref.name,
-        title: pref.title,
-        description: pref.description,
-        placeholder: pref.placeholder,
-        required: Boolean(pref.required),
-        type: pref.type,
-        default: resolvedDefault,
-        data: Array.isArray(pref.data) ? pref.data : void 0
-      });
-      if (resolvedDefault !== void 0) {
-        commandPrefs[pref.name] = resolvedDefault;
-      } else if (pref.type === "checkbox") {
-        commandPrefs[pref.name] = false;
-      } else if (pref.type === "textfield" || pref.type === "password") {
-        commandPrefs[pref.name] = "";
-      } else if (pref.type === "dropdown") {
-        commandPrefs[pref.name] = pref.data?.[0]?.value ?? "";
-      }
-    }
-  }
-  return { extensionPrefs, commandPrefs, definitions };
-}
-async function buildSingleCommand(extName, cmdName) {
-  const extPath = resolveInstalledExtensionPath(extName);
-  if (!extPath) {
-    console.error(`buildSingleCommand: extension path not found for ${extName}`);
-    return false;
-  }
-  const pkgPath = path4.join(extPath, "package.json");
-  if (!fs.existsSync(pkgPath)) {
-    console.error(`buildSingleCommand: package.json not found at ${pkgPath}`);
-    return false;
-  }
-  let cmd;
-  let requiresNodeModules = false;
-  let manifestExternal = [];
-  try {
-    const pkg = JSON.parse(fs.readFileSync(pkgPath, "utf-8"));
-    if (!isManifestPlatformCompatible(pkg)) {
-      console.error(`buildSingleCommand: platform not compatible for ${extName}`);
-      return false;
-    }
-    const commands = pkg.commands || [];
-    cmd = commands.find((c) => c.name === cmdName);
-    requiresNodeModules = extensionRequiresNodeModules(pkg);
-    manifestExternal = Array.isArray(pkg.external) ? pkg.external.filter((v) => typeof v === "string" && v.trim().length > 0) : [];
-  } catch (e) {
-    console.error(`buildSingleCommand: failed to parse package.json for ${extName}:`, e?.message);
-    return false;
-  }
-  if (!cmd) {
-    console.error(`buildSingleCommand: command "${cmdName}" not found in ${extName} package.json`);
-    return false;
-  }
-  if (!isCommandPlatformCompatible(cmd)) {
-    console.error(`buildSingleCommand: command "${cmdName}" not compatible with current platform`);
-    return false;
-  }
-  const entryFile = resolveEntryFile(extPath, cmd);
-  if (!entryFile) {
-    console.error(`buildSingleCommand: entry file not found for ${extName}/${cmdName}`);
-    return false;
-  }
-  const buildDir = getBuildDir(extPath);
-  fs.mkdirSync(buildDir, { recursive: true });
-  const outFile = path4.join(buildDir, `${cmdName}.js`);
-  fs.mkdirSync(path4.dirname(outFile), { recursive: true });
-  const extNodeModules = path4.join(extPath, "node_modules");
-  if (requiresNodeModules && !fs.existsSync(extNodeModules)) {
-    console.log(`  node_modules missing for ${extName}, installing dependencies\u2026`);
-    try {
-      const { installExtensionDeps: installExtensionDeps2 } = (init_extension_registry(), __toCommonJS(extension_registry_exports));
-      await installExtensionDeps2(extPath);
-    } catch (e) {
-      console.error(`  Failed to install dependencies for ${extName}:`, e?.message);
-      return false;
-    }
-    if (!fs.existsSync(extNodeModules)) return false;
-  }
-  try {
-    const esbuild = requireEsbuild();
-    console.log(`  On-demand building ${extName}/${cmdName}\u2026`);
-    await runEsbuildBuild(
-      esbuild,
-      {
-        entryPoints: [entryFile],
-        absWorkingDir: extPath,
-        bundle: true,
-        format: "cjs",
-        platform: "node",
-        conditions: ["require", "node"],
-        outfile: outFile,
-        plugins: [
-          legacyCheerioInteropPlugin(),
-          {
-            name: "swift-external",
-            setup(build) {
-              build.onResolve({ filter: /^swift:/ }, (args) => ({
-                path: args.path,
-                external: true
-              }));
-            }
-          }
-        ],
-        external: [
-          "react",
-          "react-dom",
-          "react-dom/*",
-          "react/jsx-runtime",
-          "react/jsx-dev-runtime",
-          "@raycast/api",
-          "@raycast/utils",
-          "re2",
-          "better-sqlite3",
-          "fsevents",
-          "raycast-cross-extension",
-          "node-fetch",
-          "undici",
-          "undici/*",
-          "axios",
-          "tar",
-          "extract-zip",
-          "sha256-file",
-          ...manifestExternal,
-          ...nodeBuiltins
-        ],
-        nodePaths: fs.existsSync(extNodeModules) ? [extNodeModules] : [],
-        target: "es2020",
-        jsx: "automatic",
-        jsxImportSource: "react",
-        tsconfigRaw: getEsbuildTsconfigRaw(extPath),
-        define: {
-          "process.env.NODE_ENV": '"production"',
-          "global": "globalThis"
-        },
-        logLevel: "warning"
-      },
-      extPath,
-      `${extName}/${cmdName}`
-    );
-    return fs.existsSync(outFile);
-  } catch (e) {
-    console.error(`  On-demand esbuild failed for ${extName}/${cmdName}:`, e);
-    lastBuildError.set(`${extName}/${cmdName}`, e?.message || String(e));
-    return false;
-  }
-}
-function extractMissingBareImports(error) {
-  const errors = Array.isArray(error?.errors) ? error.errors : [];
-  const found = /* @__PURE__ */ new Set();
-  for (const err of errors) {
-    const text = String(err?.text || "");
-    const match = text.match(/Could not resolve\s+"([^"]+)"/);
-    if (!match) continue;
-    const specifier = match[1];
-    if (!specifier || specifier.startsWith(".") || specifier.startsWith("/") || specifier.includes(":")) {
-      continue;
-    }
-    const parts = specifier.split("/");
-    const pkgName = specifier.startsWith("@") ? parts.slice(0, 2).join("/") : parts[0];
-    if (!pkgName) continue;
-    if (nodeBuiltins.includes(pkgName)) continue;
-    if (pkgName.startsWith("@raycast/")) continue;
-    found.add(pkgName);
-  }
-  return [...found];
-}
-async function runEsbuildBuild(esbuild, options, extPath, label) {
-  try {
-    await esbuild.build(options);
-  } catch (error) {
-    const missing = extractMissingBareImports(error);
-    if (missing.length === 0) throw error;
-    console.log(
-      `  Missing packages for ${label} (${missing.join(", ")}); installing and retrying\u2026`
-    );
-    const { installSpecificPackages: installSpecificPackages2 } = (init_extension_registry(), __toCommonJS(extension_registry_exports));
-    try {
-      await installSpecificPackages2(extPath, missing);
-    } catch (installError) {
-      console.error(
-        `  Failed to install missing packages for ${label}: ${installError?.message || installError}`
-      );
-      throw error;
-    }
-    await esbuild.build(options);
-  }
-}
-async function getExtensionBundle(extName, cmdName) {
-  const normalizedExtName = normalizeExtensionName(extName);
-  const extPath = resolveInstalledExtensionPath(normalizedExtName);
-  if (!extPath) {
-    const searchRoots = getConfiguredExtensionRoots();
-    const msg = `Extension directory not found: ${normalizedExtName}. Searched roots: ${searchRoots.join(", ")}`;
-    console.error(msg);
-    throw new Error(msg);
-  }
-  let outFile = path4.join(extPath, ".sc-build", `${cmdName}.js`);
-  if (!fs.existsSync(outFile)) {
-    console.log(`Pre-built bundle not found for ${normalizedExtName}/${cmdName}, building on-demand\u2026`);
-    const built = await buildSingleCommand(normalizedExtName, cmdName);
-    if (!built || !fs.existsSync(outFile)) {
-      try {
-        console.log(`Single-command build failed for ${normalizedExtName}/${cmdName}; trying full extension rebuild\u2026`);
-        await buildAllCommands(normalizedExtName);
-      } catch (rebuildError) {
-        console.warn(`Full rebuild fallback failed for ${normalizedExtName}:`, rebuildError);
-      }
-    }
-    if (!fs.existsSync(outFile)) {
-      let diagnostic = "";
-      try {
-        const pkgPath = path4.join(extPath, "package.json");
-        const pkg = JSON.parse(fs.readFileSync(pkgPath, "utf-8"));
-        const commands = Array.isArray(pkg?.commands) ? pkg.commands : [];
-        const cmd = commands.find((c) => c?.name === cmdName);
-        const nodeModulesExists = fs.existsSync(path4.join(extPath, "node_modules"));
-        const requiresNodeModules = extensionRequiresNodeModules(pkg);
-        if (!cmd) {
-          diagnostic = ` Command "${cmdName}" not found in package.json.`;
-        } else {
-          const entry = resolveEntryFile(extPath, cmd);
-          if (!entry) {
-            diagnostic = ` Entry file not found for "${cmdName}".`;
-          } else if (requiresNodeModules && !nodeModulesExists) {
-            diagnostic = " node_modules is missing (dependency installation likely failed).";
-          }
-        }
-      } catch {
-      }
-      const underlying = lastBuildError.get(`${normalizedExtName}/${cmdName}`);
-      const underlyingSuffix = underlying ? ` Underlying error: ${underlying}` : "";
-      const msg = `On-demand build failed for ${normalizedExtName}/${cmdName}. Extension path: ${extPath}. Expected output: ${outFile}.${diagnostic}${underlyingSuffix}`;
-      console.error(msg);
-      throw new Error(msg);
-    }
-  }
-  const code = fs.readFileSync(outFile, "utf-8");
-  if (!code) {
-    const msg = `Pre-built bundle is empty: ${outFile}`;
-    console.error(msg);
-    throw new Error(msg);
-  }
-  let title = cmdName;
-  let mode = "view";
-  let owner = "";
-  let extensionDisplayName = extName;
-  let extensionIconDataUrl;
-  let preferences = {};
-  let commandPreferences = {};
-  let preferenceDefinitions = [];
-  let commandArgumentDefinitions = [];
-  try {
-    const pkgPath = path4.join(extPath, "package.json");
-    const pkg = JSON.parse(fs.readFileSync(pkgPath, "utf-8"));
-    if (!isManifestPlatformCompatible(pkg)) {
-      return null;
-    }
-    const cmd = (pkg.commands || []).find((c) => c.name === cmdName);
-    if (cmd && !isCommandPlatformCompatible(cmd)) {
-      return null;
-    }
-    if (cmd?.title) title = cmd.title;
-    if (cmd?.mode) mode = cmd.mode;
-    if (pkg?.title) extensionDisplayName = pkg.title;
-    extensionIconDataUrl = getExtensionIconDataUrl(extPath, pkg.icon || "icon.png");
-    const rawOwner = pkg.owner || pkg.author || "";
-    owner = typeof rawOwner === "object" ? rawOwner.name || "" : rawOwner;
-    const { extensionPrefs, commandPrefs, definitions } = parsePreferences(pkg, cmdName);
-    preferences = extensionPrefs;
-    commandPreferences = commandPrefs;
-    preferenceDefinitions = definitions;
-    commandArgumentDefinitions = Array.isArray(cmd?.arguments) ? cmd.arguments.filter((arg) => arg && arg.name).map((arg) => ({
-      name: arg.name,
-      required: Boolean(arg.required),
-      type: arg.type,
-      placeholder: arg.placeholder,
-      title: arg.title,
-      data: Array.isArray(arg.data) ? arg.data : void 0
-    })) : [];
-  } catch {
-  }
-  const assetsPath = path4.join(extPath, "assets");
-  const supportPath = path4.join(app.getPath("userData"), "extension-support", normalizedExtName);
-  if (!fs.existsSync(supportPath)) {
-    fs.mkdirSync(supportPath, { recursive: true });
-  }
-  return {
-    code,
-    title,
-    mode,
-    extensionName: normalizedExtName,
-    extensionDisplayName,
-    extensionIconDataUrl,
-    commandName: cmdName,
-    assetsPath,
-    supportPath,
-    extensionPath: extPath,
-    owner,
-    preferences: { ...preferences, ...commandPreferences },
-    commandPreferences,
-    preferenceDefinitions,
-    commandArgumentDefinitions
-  };
-}
-var fs, os, path4, nodeBuiltins, lastBuildError;
-var init_extension_builder = __esm({
-  "src/main/extension-builder.ts"() {
-    "use strict";
-    init_electron_shim();
-    fs = __toESM(require("fs"));
-    os = __toESM(require("os"));
-    path4 = __toESM(require("path"));
-    init_extension_platform();
-    init_esbuild_runtime();
-    nodeBuiltins = [
-      "assert",
-      "buffer",
-      "child_process",
-      "cluster",
-      "crypto",
-      "dgram",
-      "dns",
-      "events",
-      "fs",
-      "fs/promises",
-      "http",
-      "http2",
-      "https",
-      "module",
-      "net",
-      "os",
-      "path",
-      "perf_hooks",
-      "process",
-      "querystring",
-      "readline",
-      "stream",
-      "stream/promises",
-      "string_decoder",
-      "timers",
-      "timers/promises",
-      "tls",
-      "tty",
-      "url",
-      "util",
-      "v8",
-      "vm",
-      "worker_threads",
-      "zlib",
-      "async_hooks",
-      "node:assert",
-      "node:buffer",
-      "node:child_process",
-      "node:crypto",
-      "node:events",
-      "node:fs",
-      "node:fs/promises",
-      "node:http",
-      "node:https",
-      "node:module",
-      "node:net",
-      "node:os",
-      "node:path",
-      "node:process",
-      "node:querystring",
-      "node:stream",
-      "node:timers",
-      "node:timers/promises",
-      "node:url",
-      "node:util",
-      "node:vm",
-      "node:worker_threads",
-      "node:zlib",
-      "node:async_hooks"
-    ];
-    lastBuildError = /* @__PURE__ */ new Map();
+    import_node_fs9 = require("node:fs");
+    import_node_path9 = require("node:path");
   }
 });
 
@@ -9199,15 +8305,15 @@ function getBunDownloadUrl() {
   return "";
 }
 function getBunDir() {
-  return path5.join(app.getPath("userData"), "bun");
+  return path4.join(app.getPath("userData"), "bun");
 }
 function getBunBinaryPath() {
-  return path5.join(getBunDir(), "bun");
+  return path4.join(getBunDir(), "bun");
 }
 function isBunAvailable() {
   const binPath = getBunBinaryPath();
   try {
-    return fs2.existsSync(binPath) && fs2.statSync(binPath).size > 1e6;
+    return fs.existsSync(binPath) && fs.statSync(binPath).size > 1e6;
   } catch {
     return false;
   }
@@ -9222,17 +8328,17 @@ async function ensureBun() {
     return null;
   }
   const bunDir = getBunDir();
-  fs2.mkdirSync(bunDir, { recursive: true });
+  fs.mkdirSync(bunDir, { recursive: true });
   console.log(`Downloading Bun v${BUN_VERSION}...`);
   broadcastInstallStatus("Setting up installer for first use\u2026");
   try {
     const zipBuffer = await downloadFile(url);
     broadcastInstallStatus("Setting up installer\u2026");
     console.log(`Downloaded Bun (${(zipBuffer.length / 1024 / 1024).toFixed(1)}MB), extracting...`);
-    const tmpZipPath = path5.join(app.getPath("temp"), `bun-${Date.now()}.zip`);
-    fs2.writeFileSync(tmpZipPath, zipBuffer);
-    const tmpExtractDir = path5.join(app.getPath("temp"), `bun-extract-${Date.now()}`);
-    fs2.mkdirSync(tmpExtractDir, { recursive: true });
+    const tmpZipPath = path4.join(app.getPath("temp"), `bun-${Date.now()}.zip`);
+    fs.writeFileSync(tmpZipPath, zipBuffer);
+    const tmpExtractDir = path4.join(app.getPath("temp"), `bun-extract-${Date.now()}`);
+    fs.mkdirSync(tmpExtractDir, { recursive: true });
     await execAsync(`unzip -o "${tmpZipPath}" -d "${tmpExtractDir}"`, {
       timeout: 3e4
     });
@@ -9241,14 +8347,14 @@ async function ensureBun() {
       throw new Error("Bun binary not found in downloaded archive");
     }
     const destPath = getBunBinaryPath();
-    fs2.copyFileSync(bunBinary, destPath);
-    fs2.chmodSync(destPath, 493);
+    fs.copyFileSync(bunBinary, destPath);
+    fs.chmodSync(destPath, 493);
     try {
-      fs2.rmSync(tmpZipPath, { force: true });
+      fs.rmSync(tmpZipPath, { force: true });
     } catch {
     }
     try {
-      fs2.rmSync(tmpExtractDir, { recursive: true, force: true });
+      fs.rmSync(tmpExtractDir, { recursive: true, force: true });
     } catch {
     }
     const { stdout } = await execAsync(`"${destPath}" --version`, { timeout: 5e3 });
@@ -9257,7 +8363,7 @@ async function ensureBun() {
   } catch (error) {
     console.error("Failed to download/install Bun:", error?.message || error);
     try {
-      fs2.rmSync(getBunBinaryPath(), { force: true });
+      fs.rmSync(getBunBinaryPath(), { force: true });
     } catch {
     }
     return null;
@@ -9266,11 +8372,11 @@ async function ensureBun() {
 async function installDepsWithBun(extPath) {
   const bunPath = await ensureBun();
   if (!bunPath) return false;
-  const pkgPath = path5.join(extPath, "package.json");
-  if (!fs2.existsSync(pkgPath)) return true;
+  const pkgPath = path4.join(extPath, "package.json");
+  if (!fs.existsSync(pkgPath)) return true;
   let pkg;
   try {
-    pkg = JSON.parse(fs2.readFileSync(pkgPath, "utf-8"));
+    pkg = JSON.parse(fs.readFileSync(pkgPath, "utf-8"));
   } catch {
     return true;
   }
@@ -9280,10 +8386,10 @@ async function installDepsWithBun(extPath) {
   };
   const thirdPartyDeps = Object.entries(deps).filter(([name]) => !name.startsWith("@raycast/")).map(([name, version]) => `${name}@${version}`).filter(Boolean);
   if (thirdPartyDeps.length === 0) {
-    console.log(`No third-party deps for ${path5.basename(extPath)} \u2014 skipping bun install`);
+    console.log(`No third-party deps for ${path4.basename(extPath)} \u2014 skipping bun install`);
     return true;
   }
-  console.log(`Installing ${thirdPartyDeps.length} deps via Bun for ${path5.basename(extPath)}...`);
+  console.log(`Installing ${thirdPartyDeps.length} deps via Bun for ${path4.basename(extPath)}...`);
   try {
     const cleanPkg = {
       name: pkg.name || "extension",
@@ -9293,11 +8399,11 @@ async function installDepsWithBun(extPath) {
         Object.entries(deps).filter(([name]) => !name.startsWith("@raycast/"))
       )
     };
-    const originalPkg = fs2.readFileSync(pkgPath, "utf-8");
-    fs2.writeFileSync(pkgPath, JSON.stringify(cleanPkg, null, 2));
+    const originalPkg = fs.readFileSync(pkgPath, "utf-8");
+    fs.writeFileSync(pkgPath, JSON.stringify(cleanPkg, null, 2));
     for (const lockfile of ["package-lock.json", "bun.lockb", "bun.lock", "yarn.lock", "pnpm-lock.yaml"]) {
       try {
-        fs2.rmSync(path5.join(extPath, lockfile), { force: true });
+        fs.rmSync(path4.join(extPath, lockfile), { force: true });
       } catch {
       }
     }
@@ -9306,23 +8412,23 @@ async function installDepsWithBun(extPath) {
       timeout: 12e4,
       env: {
         ...process.env,
-        PATH: `${path5.dirname(bunPath)}:${process.env.PATH || ""}`
+        PATH: `${path4.dirname(bunPath)}:${process.env.PATH || ""}`
       }
     });
-    fs2.writeFileSync(pkgPath, originalPkg);
-    const hasNodeModules2 = fs2.existsSync(path5.join(extPath, "node_modules"));
+    fs.writeFileSync(pkgPath, originalPkg);
+    const hasNodeModules2 = fs.existsSync(path4.join(extPath, "node_modules"));
     if (hasNodeModules2) {
-      console.log(`Bun install succeeded for ${path5.basename(extPath)}`);
+      console.log(`Bun install succeeded for ${path4.basename(extPath)}`);
       return true;
     }
-    console.warn(`Bun completed but node_modules missing for ${path5.basename(extPath)}`);
-    fs2.writeFileSync(pkgPath, originalPkg);
+    console.warn(`Bun completed but node_modules missing for ${path4.basename(extPath)}`);
+    fs.writeFileSync(pkgPath, originalPkg);
     return false;
   } catch (error) {
-    console.warn(`Bun install failed for ${path5.basename(extPath)}:`, error?.message);
+    console.warn(`Bun install failed for ${path4.basename(extPath)}:`, error?.message);
     try {
       const originalContent = JSON.stringify(pkg, null, 2);
-      fs2.writeFileSync(pkgPath, originalContent);
+      fs.writeFileSync(pkgPath, originalContent);
     } catch {
     }
     return false;
@@ -9341,19 +8447,19 @@ async function installSpecificPackagesWithBun(extPath, packageNames) {
     console.warn(`Refusing invalid package name from extension build: ${invalid}`);
     return false;
   }
-  console.log(`Installing specific packages via Bun for ${path5.basename(extPath)}: ${unique.join(", ")}`);
+  console.log(`Installing specific packages via Bun for ${path4.basename(extPath)}: ${unique.join(", ")}`);
   try {
-    await execFileAsync6(bunPath, ["add", "--no-save", ...unique], {
+    await execFileAsync5(bunPath, ["add", "--no-save", ...unique], {
       cwd: extPath,
       timeout: 3e5,
       env: {
         ...process.env,
-        PATH: `${path5.dirname(bunPath)}:${process.env.PATH || ""}`
+        PATH: `${path4.dirname(bunPath)}:${process.env.PATH || ""}`
       }
     });
-    return fs2.existsSync(path5.join(extPath, "node_modules"));
+    return fs.existsSync(path4.join(extPath, "node_modules"));
   } catch (error) {
-    console.warn(`Bun add failed for ${path5.basename(extPath)}:`, error?.message);
+    console.warn(`Bun add failed for ${path4.basename(extPath)}:`, error?.message);
     return false;
   }
 }
@@ -9386,9 +8492,9 @@ function downloadFile(url) {
 }
 function findFile(dir, name) {
   try {
-    const entries = fs2.readdirSync(dir, { withFileTypes: true });
+    const entries = fs.readdirSync(dir, { withFileTypes: true });
     for (const entry of entries) {
-      const full = path5.join(dir, entry.name);
+      const full = path4.join(dir, entry.name);
       if (entry.isFile() && entry.name === name) return full;
       if (entry.isDirectory()) {
         const found = findFile(full, name);
@@ -9399,19 +8505,19 @@ function findFile(dir, name) {
   }
   return null;
 }
-var import_child_process, import_util, fs2, path5, https2, http2, execAsync, execFileAsync6, BUN_VERSION;
+var import_child_process, import_util, fs, path4, https2, http2, execAsync, execFileAsync5, BUN_VERSION;
 var init_bun_manager = __esm({
   "src/main/bun-manager.ts"() {
     "use strict";
     init_electron_shim();
     import_child_process = require("child_process");
     import_util = require("util");
-    fs2 = __toESM(require("fs"));
-    path5 = __toESM(require("path"));
+    fs = __toESM(require("fs"));
+    path4 = __toESM(require("path"));
     https2 = __toESM(require("https"));
     http2 = __toESM(require("http"));
     execAsync = (0, import_util.promisify)(import_child_process.exec);
-    execFileAsync6 = (0, import_util.promisify)(import_child_process.execFile);
+    execFileAsync5 = (0, import_util.promisify)(import_child_process.execFile);
     BUN_VERSION = "1.2.5";
   }
 });
@@ -9425,7 +8531,7 @@ __export(extension_registry_exports, {
   getExtensionPreferences: () => getExtensionPreferences,
   getExtensionScreenshotUrls: () => getExtensionScreenshotUrls,
   getInstalledExtensionNames: () => getInstalledExtensionNames,
-  installExtension: () => installExtension2,
+  installExtension: () => installExtension,
   installExtensionDeps: () => installExtensionDeps,
   installRegistryExtension: () => installRegistryExtension,
   installSpecificPackages: () => installSpecificPackages,
@@ -9434,14 +8540,15 @@ __export(extension_registry_exports, {
   listInstalledRegistryExtensions: () => listInstalledRegistryExtensions,
   resolveInstalledPackageJsonPath: () => resolveInstalledPackageJsonPath,
   saveExtensionPreferences: () => saveExtensionPreferences,
+  scoreCatalogEntrySearch: () => scoreCatalogEntrySearch,
   searchExtensionCatalog: () => searchExtensionCatalog,
   shouldShowExtensionPreferenceSetup: () => shouldShowExtensionPreferenceSetup,
-  uninstallExtension: () => uninstallExtension2,
+  uninstallExtension: () => uninstallExtension,
   uninstallRegistryExtension: () => uninstallRegistryExtension
 });
 function hasNodeModules(extPath) {
   try {
-    return fs3.existsSync(path6.join(extPath, "node_modules"));
+    return fs2.existsSync(path5.join(extPath, "node_modules"));
   } catch {
     return false;
   }
@@ -9496,13 +8603,13 @@ async function downloadExtensionFromTree(name, tmpDir) {
     (entry) => entry.type === "blob" && entry.path.startsWith(prefix)
   );
   if (fileEntries.length === 0) return null;
-  const srcDir = path6.join(tmpDir, "extensions", name);
-  fs3.mkdirSync(srcDir, { recursive: true });
+  const srcDir = path5.join(tmpDir, "extensions", name);
+  fs2.mkdirSync(srcDir, { recursive: true });
   for (const entry of fileEntries) {
     const relativePath = entry.path.slice(prefix.length);
     if (!relativePath) continue;
-    const destination = path6.join(srcDir, relativePath);
-    fs3.mkdirSync(path6.dirname(destination), { recursive: true });
+    const destination = path5.join(srcDir, relativePath);
+    fs2.mkdirSync(path5.dirname(destination), { recursive: true });
   }
   const CONCURRENCY = 30;
   let index = 0;
@@ -9512,7 +8619,7 @@ async function downloadExtensionFromTree(name, tmpDir) {
       const entry = fileEntries[i];
       const relativePath = entry.path.slice(prefix.length);
       if (!relativePath) continue;
-      const destination = path6.join(srcDir, relativePath);
+      const destination = path5.join(srcDir, relativePath);
       const fileUrl = `${GITHUB_RAW}/${entry.path}`;
       const response = await fetchWithTimeout(
         fileUrl,
@@ -9528,7 +8635,7 @@ async function downloadExtensionFromTree(name, tmpDir) {
         throw new Error(`Failed to download ${entry.path} (${response.status} ${response.statusText})`);
       }
       const data = await response.arrayBuffer();
-      fs3.writeFileSync(destination, Buffer.from(data));
+      fs2.writeFileSync(destination, Buffer.from(data));
     }
   };
   const workers = Array.from(
@@ -9540,7 +8647,7 @@ async function downloadExtensionFromTree(name, tmpDir) {
   return srcDir;
 }
 function downloadExtensionViaSparseGit(name, tmpDir) {
-  const checkoutDir = path6.join(tmpDir, "raymes-extensions-source");
+  const checkoutDir = path5.join(tmpDir, "raymes-extensions-source");
   try {
     (0, import_child_process2.execFileSync)("git", [
       "clone",
@@ -9558,8 +8665,8 @@ function downloadExtensionViaSparseGit(name, tmpDir) {
       "set",
       `extensions/${name}`
     ], { stdio: "ignore", timeout: 12e4 });
-    const extensionDir = path6.join(checkoutDir, "extensions", name);
-    return fs3.existsSync(path6.join(extensionDir, "package.json")) ? extensionDir : null;
+    const extensionDir = path5.join(checkoutDir, "extensions", name);
+    return fs2.existsSync(path5.join(extensionDir, "package.json")) ? extensionDir : null;
   } catch (error) {
     console.warn(`Sparse git fallback failed for "${name}":`, error);
     return null;
@@ -9589,25 +8696,25 @@ function coerceCatalogEntry(raw) {
   };
 }
 function getCatalogPath() {
-  return path6.join(app.getPath("userData"), "extension-catalog.json");
+  return path5.join(app.getPath("userData"), "extension-catalog.json");
 }
 function getExtensionsDir() {
-  const dir = path6.join(app.getPath("userData"), "extensions");
-  if (!fs3.existsSync(dir)) {
-    fs3.mkdirSync(dir, { recursive: true });
+  const dir = path5.join(app.getPath("userData"), "extensions");
+  if (!fs2.existsSync(dir)) {
+    fs2.mkdirSync(dir, { recursive: true });
   }
   return dir;
 }
 function getInstalledPath(name) {
-  return path6.join(getExtensionsDir(), name);
+  return path5.join(getExtensionsDir(), name);
 }
 function getLegacyInstalledPath(name) {
   const slug = slugFromRaymesExtensionId(name);
-  return path6.join(getExtensionsDir(), "packages", normalizeRaymesExtensionId(slug));
+  return path5.join(getExtensionsDir(), "packages", normalizeRaymesExtensionId(slug));
 }
 function getLegacyRegistryInstalledPath(name) {
   const slug = slugFromRaymesExtensionId(name);
-  return path6.join(app.getPath("userData"), "extension-registry", "packages", normalizeRaymesExtensionId(slug));
+  return path5.join(app.getPath("userData"), "extension-registry", "packages", normalizeRaymesExtensionId(slug));
 }
 function resolveInstalledExtensionPathForRaymes(name) {
   const slug = slugFromRaymesExtensionId(name);
@@ -9619,13 +8726,13 @@ function resolveInstalledExtensionPathForRaymes(name) {
     getLegacyRegistryInstalledPath(slug)
   ];
   for (const candidate of candidates) {
-    if (fs3.existsSync(path6.join(candidate, "package.json"))) return candidate;
+    if (fs2.existsSync(path5.join(candidate, "package.json"))) return candidate;
   }
   return null;
 }
 function loadCatalogFromDisk() {
   try {
-    const data = fs3.readFileSync(getCatalogPath(), "utf-8");
+    const data = fs2.readFileSync(getCatalogPath(), "utf-8");
     const parsed = JSON.parse(data);
     const entries = Array.isArray(parsed.entries) ? parsed.entries.map((entry) => coerceCatalogEntry(entry)).filter(Boolean) : [];
     if (entries.length === 0) return null;
@@ -9640,19 +8747,19 @@ function loadCatalogFromDisk() {
 }
 function saveCatalogToDisk(catalog) {
   try {
-    fs3.writeFileSync(getCatalogPath(), JSON.stringify(catalog));
+    fs2.writeFileSync(getCatalogPath(), JSON.stringify(catalog));
   } catch (e) {
     console.error("Failed to save catalog:", e);
   }
 }
 async function getCatalog(forceRefresh = false) {
-  if (!forceRefresh && catalogCache2 && Date.now() - catalogCache2.fetchedAt < CATALOG_TTL) {
-    return catalogCache2.entries;
+  if (!forceRefresh && catalogCache && Date.now() - catalogCache.fetchedAt < CATALOG_TTL) {
+    return catalogCache.entries;
   }
   if (!forceRefresh) {
     const diskCache2 = loadCatalogFromDisk();
     if (diskCache2 && Date.now() - diskCache2.fetchedAt < CATALOG_TTL) {
-      catalogCache2 = diskCache2;
+      catalogCache = diskCache2;
       return diskCache2.entries;
     }
   }
@@ -9664,7 +8771,7 @@ async function getCatalog(forceRefresh = false) {
       fetchedAt: Date.now(),
       version: CATALOG_VERSION
     };
-    catalogCache2 = cache2;
+    catalogCache = cache2;
     saveCatalogToDisk(cache2);
     console.log(`Extension catalog (API): ${entries.length} extensions cached.`);
     return entries;
@@ -9673,7 +8780,7 @@ async function getCatalog(forceRefresh = false) {
   }
   const diskCache = loadCatalogFromDisk();
   if (diskCache) {
-    catalogCache2 = diskCache;
+    catalogCache = diskCache;
     console.log(`Extension catalog (disk cache): ${diskCache.entries.length} extensions from cache.`);
     return diskCache.entries;
   }
@@ -9717,19 +8824,19 @@ async function installSpecificPackages(extPath, packageNames) {
   );
   if (unique.length === 0) return;
   console.log(
-    `Installing missing packages for ${path6.basename(extPath)}: ${unique.join(", ")}`
+    `Installing missing packages for ${path5.basename(extPath)}: ${unique.join(", ")}`
   );
   const ok = await installSpecificPackagesWithBun(extPath, unique);
   if (!ok) {
-    throw new Error(`Bun failed to install packages for ${path6.basename(extPath)}`);
+    throw new Error(`Bun failed to install packages for ${path5.basename(extPath)}`);
   }
 }
 async function installExtensionDeps(extPath) {
-  const pkgPath = path6.join(extPath, "package.json");
-  if (!fs3.existsSync(pkgPath)) return;
+  const pkgPath = path5.join(extPath, "package.json");
+  if (!fs2.existsSync(pkgPath)) return;
   let pkg;
   try {
-    pkg = JSON.parse(fs3.readFileSync(pkgPath, "utf-8"));
+    pkg = JSON.parse(fs2.readFileSync(pkgPath, "utf-8"));
   } catch {
     return;
   }
@@ -9739,20 +8846,20 @@ async function installExtensionDeps(extPath) {
   };
   const thirdPartyDeps = Object.entries(deps).filter(([name]) => !name.startsWith("@raycast/")).map(([name, version]) => `${name}@${version}`).filter(Boolean);
   if (thirdPartyDeps.length === 0) {
-    console.log(`No third-party dependencies for ${path6.basename(extPath)}`);
+    console.log(`No third-party dependencies for ${path5.basename(extPath)}`);
     return;
   }
   console.log(
-    `Installing ${thirdPartyDeps.length} dependencies for ${path6.basename(extPath)}: ${thirdPartyDeps.join(", ")}`
+    `Installing ${thirdPartyDeps.length} dependencies for ${path5.basename(extPath)}: ${thirdPartyDeps.join(", ")}`
   );
   const ok = await installDepsWithBun(extPath);
   if (!ok) {
-    throw new Error(`Bun dependency installation failed for ${path6.basename(extPath)}`);
+    throw new Error(`Bun dependency installation failed for ${path5.basename(extPath)}`);
   }
   if (!hasNodeModules(extPath)) {
     throw new Error("Bun completed but node_modules is still missing");
   }
-  console.log(`Dependencies installed for ${path6.basename(extPath)}`);
+  console.log(`Dependencies installed for ${path5.basename(extPath)}`);
 }
 function isExtensionInstalled(name) {
   return resolveInstalledExtensionPathForRaymes(name) !== null;
@@ -9760,11 +8867,11 @@ function isExtensionInstalled(name) {
 function getInstalledExtensionNames() {
   const names = /* @__PURE__ */ new Set();
   const scanRoot = (root, stripRaycastPrefix) => {
-    if (!fs3.existsSync(root)) return;
+    if (!fs2.existsSync(root)) return;
     try {
-      for (const d of fs3.readdirSync(root)) {
-        const p = path6.join(root, d);
-        if (fs3.statSync(p).isDirectory() && fs3.existsSync(path6.join(p, "package.json"))) {
+      for (const d of fs2.readdirSync(root)) {
+        const p = path5.join(root, d);
+        if (fs2.statSync(p).isDirectory() && fs2.existsSync(path5.join(p, "package.json"))) {
           names.add(stripRaycastPrefix ? slugFromRaymesExtensionId(d) : d);
         }
       }
@@ -9772,11 +8879,11 @@ function getInstalledExtensionNames() {
     }
   };
   scanRoot(getExtensionsDir(), false);
-  scanRoot(path6.join(getExtensionsDir(), "packages"), true);
-  scanRoot(path6.join(app.getPath("userData"), "extension-registry", "packages"), true);
+  scanRoot(path5.join(getExtensionsDir(), "packages"), true);
+  scanRoot(path5.join(app.getPath("userData"), "extension-registry", "packages"), true);
   return [...names].filter(Boolean).sort((a, b) => a.localeCompare(b));
 }
-async function installExtension2(name) {
+async function installExtension(name) {
   if (!/^[A-Za-z0-9._-]+$/.test(String(name || ""))) {
     console.error(`Invalid extension name: "${name}"`);
     return false;
@@ -9797,45 +8904,45 @@ async function installExtension2(name) {
 }
 async function installExtensionFromBundle(name) {
   const installPath = getInstalledPath(name);
-  const hadExistingInstall = fs3.existsSync(installPath);
-  const backupPath = hadExistingInstall ? path6.join(getExtensionsDir(), `${name}.backup-${Date.now()}`) : "";
-  const tmpDir = path6.join(app.getPath("temp"), `supercmd-bundle-${Date.now()}`);
+  const hadExistingInstall = fs2.existsSync(installPath);
+  const backupPath = hadExistingInstall ? path5.join(getExtensionsDir(), `${name}.backup-${Date.now()}`) : "";
+  const tmpDir = path5.join(app.getPath("temp"), `supercmd-bundle-${Date.now()}`);
   try {
     const t0 = Date.now();
     const { url } = await getExtensionBundleUrl(name);
     console.log(`Downloading pre-built bundle for "${name}"\u2026`);
-    fs3.mkdirSync(tmpDir, { recursive: true });
+    fs2.mkdirSync(tmpDir, { recursive: true });
     await downloadAndExtractTarball(url, tmpDir);
-    const nestedPath = path6.join(tmpDir, name);
+    const nestedPath = path5.join(tmpDir, name);
     let srcDir = tmpDir;
-    if (fs3.existsSync(path6.join(nestedPath, "package.json"))) {
+    if (fs2.existsSync(path5.join(nestedPath, "package.json"))) {
       srcDir = nestedPath;
-    } else if (!fs3.existsSync(path6.join(srcDir, "package.json"))) {
-      const subdirs = fs3.readdirSync(tmpDir, { withFileTypes: true }).filter((d) => d.isDirectory());
+    } else if (!fs2.existsSync(path5.join(srcDir, "package.json"))) {
+      const subdirs = fs2.readdirSync(tmpDir, { withFileTypes: true }).filter((d) => d.isDirectory());
       for (const sub of subdirs) {
-        if (fs3.existsSync(path6.join(tmpDir, sub.name, "package.json"))) {
-          srcDir = path6.join(tmpDir, sub.name);
+        if (fs2.existsSync(path5.join(tmpDir, sub.name, "package.json"))) {
+          srcDir = path5.join(tmpDir, sub.name);
           break;
         }
       }
     }
-    if (!fs3.existsSync(path6.join(srcDir, "package.json"))) {
+    if (!fs2.existsSync(path5.join(srcDir, "package.json"))) {
       throw new Error("Bundle has no package.json");
     }
-    if (!fs3.existsSync(path6.join(srcDir, ".sc-build"))) {
+    if (!fs2.existsSync(path5.join(srcDir, ".sc-build"))) {
       throw new Error("Bundle has no .sc-build/ directory \u2014 not a pre-built bundle");
     }
-    const bundleManifest = JSON.parse(fs3.readFileSync(path6.join(srcDir, "package.json"), "utf8"));
-    const missingCommandBundles = (Array.isArray(bundleManifest.commands) ? bundleManifest.commands : []).filter((command) => command?.name).filter((command) => !fs3.existsSync(path6.join(srcDir, ".sc-build", `${command.name}.js`))).map((command) => command.name);
+    const bundleManifest = JSON.parse(fs2.readFileSync(path5.join(srcDir, "package.json"), "utf8"));
+    const missingCommandBundles = (Array.isArray(bundleManifest.commands) ? bundleManifest.commands : []).filter((command) => command?.name).filter((command) => !fs2.existsSync(path5.join(srcDir, ".sc-build", `${command.name}.js`))).map((command) => command.name);
     if (missingCommandBundles.length > 0) {
       throw new Error(`Bundle is incomplete; missing commands: ${missingCommandBundles.join(", ")}`);
     }
     if (hadExistingInstall) {
-      fs3.renameSync(installPath, backupPath);
+      fs2.renameSync(installPath, backupPath);
     }
-    fs3.cpSync(srcDir, installPath, { recursive: true });
-    if (backupPath && fs3.existsSync(backupPath)) {
-      fs3.rmSync(backupPath, { recursive: true, force: true });
+    fs2.cpSync(srcDir, installPath, { recursive: true });
+    if (backupPath && fs2.existsSync(backupPath)) {
+      fs2.rmSync(backupPath, { recursive: true, force: true });
     }
     reportInstall(name, getMachineId()).catch(() => {
     });
@@ -9843,24 +8950,24 @@ async function installExtensionFromBundle(name) {
     return true;
   } catch (error) {
     try {
-      fs3.rmSync(installPath, { recursive: true, force: true });
+      fs2.rmSync(installPath, { recursive: true, force: true });
     } catch {
     }
-    if (backupPath && fs3.existsSync(backupPath)) {
+    if (backupPath && fs2.existsSync(backupPath)) {
       try {
-        fs3.renameSync(backupPath, installPath);
+        fs2.renameSync(backupPath, installPath);
       } catch {
       }
     }
     throw error;
   } finally {
     try {
-      fs3.rmSync(tmpDir, { recursive: true, force: true });
+      fs2.rmSync(tmpDir, { recursive: true, force: true });
     } catch {
     }
-    if (backupPath && fs3.existsSync(backupPath)) {
+    if (backupPath && fs2.existsSync(backupPath)) {
       try {
-        fs3.rmSync(backupPath, { recursive: true, force: true });
+        fs2.rmSync(backupPath, { recursive: true, force: true });
       } catch {
       }
     }
@@ -9868,13 +8975,13 @@ async function installExtensionFromBundle(name) {
 }
 async function installExtensionViaAPI(name) {
   const installPath = getInstalledPath(name);
-  const hadExistingInstall = fs3.existsSync(installPath);
-  const backupPath = hadExistingInstall ? path6.join(getExtensionsDir(), `${name}.backup-${Date.now()}`) : "";
-  const tmpDir = path6.join(app.getPath("temp"), `supercmd-api-install-${Date.now()}`);
+  const hadExistingInstall = fs2.existsSync(installPath);
+  const backupPath = hadExistingInstall ? path5.join(getExtensionsDir(), `${name}.backup-${Date.now()}`) : "";
+  const tmpDir = path5.join(app.getPath("temp"), `supercmd-api-install-${Date.now()}`);
   try {
     const t0 = Date.now();
     console.log(`Installing extension: ${name}\u2026`);
-    fs3.mkdirSync(tmpDir, { recursive: true });
+    fs2.mkdirSync(tmpDir, { recursive: true });
     let srcDir = null;
     try {
       srcDir = await downloadExtensionFromTree(name, tmpDir);
@@ -9883,21 +8990,21 @@ async function installExtensionViaAPI(name) {
     }
     if (!srcDir) srcDir = downloadExtensionViaSparseGit(name, tmpDir);
     console.log(`  Download: ${Date.now() - t0}ms`);
-    if (!srcDir || !fs3.existsSync(path6.join(srcDir, "package.json"))) {
+    if (!srcDir || !fs2.existsSync(path5.join(srcDir, "package.json"))) {
       throw new Error(`Extension "${name}" not found or has no package.json`);
     }
-    const srcPkg = JSON.parse(fs3.readFileSync(path6.join(srcDir, "package.json"), "utf-8"));
+    const srcPkg = JSON.parse(fs2.readFileSync(path5.join(srcDir, "package.json"), "utf-8"));
     if (!isManifestPlatformCompatible(srcPkg)) {
       const supported = getManifestPlatforms(srcPkg);
       console.error(`Extension "${name}" is not compatible with ${getCurrentRaycastPlatform()} (supports: ${supported.join(", ")})`);
       return false;
     }
     if (hadExistingInstall) {
-      fs3.renameSync(installPath, backupPath);
+      fs2.renameSync(installPath, backupPath);
     }
-    fs3.cpSync(srcDir, installPath, { recursive: true });
+    fs2.cpSync(srcDir, installPath, { recursive: true });
     {
-      const extPkg = JSON.parse(fs3.readFileSync(path6.join(installPath, "package.json"), "utf-8"));
+      const extPkg = JSON.parse(fs2.readFileSync(path5.join(installPath, "package.json"), "utf-8"));
       const allDeps = { ...extPkg.dependencies || {}, ...extPkg.optionalDependencies || {} };
       const thirdPartyDeps = Object.keys(allDeps).filter((d) => !d.startsWith("@raycast/"));
       if (thirdPartyDeps.length === 0) {
@@ -9918,8 +9025,8 @@ async function installExtensionViaAPI(name) {
       }
       console.log(`  Build: ${Date.now() - t1}ms. Extension "${name}" installed (${builtCount} commands) in ${Date.now() - t0}ms total`);
     }
-    if (backupPath && fs3.existsSync(backupPath)) {
-      fs3.rmSync(backupPath, { recursive: true, force: true });
+    if (backupPath && fs2.existsSync(backupPath)) {
+      fs2.rmSync(backupPath, { recursive: true, force: true });
     }
     reportInstall(name, getMachineId()).catch(() => {
     });
@@ -9927,24 +9034,24 @@ async function installExtensionViaAPI(name) {
   } catch (error) {
     console.error(`API install failed for "${name}":`, error);
     try {
-      fs3.rmSync(installPath, { recursive: true, force: true });
+      fs2.rmSync(installPath, { recursive: true, force: true });
     } catch {
     }
-    if (backupPath && fs3.existsSync(backupPath)) {
+    if (backupPath && fs2.existsSync(backupPath)) {
       try {
-        fs3.renameSync(backupPath, installPath);
+        fs2.renameSync(backupPath, installPath);
       } catch {
       }
     }
     throw error;
   } finally {
     try {
-      fs3.rmSync(tmpDir, { recursive: true, force: true });
+      fs2.rmSync(tmpDir, { recursive: true, force: true });
     } catch {
     }
-    if (backupPath && fs3.existsSync(backupPath)) {
+    if (backupPath && fs2.existsSync(backupPath)) {
       try {
-        fs3.rmSync(backupPath, { recursive: true, force: true });
+        fs2.rmSync(backupPath, { recursive: true, force: true });
       } catch {
       }
     }
@@ -10000,13 +9107,13 @@ function extractTarGz(buffer, destDir) {
     const size = parseInt(sizeOctal, 8) || 0;
     offset += 512;
     if (typeFlag === 53 || fullName.endsWith("/")) {
-      const dirPath = path6.join(destDir, fullName);
-      fs3.mkdirSync(dirPath, { recursive: true });
+      const dirPath = path5.join(destDir, fullName);
+      fs2.mkdirSync(dirPath, { recursive: true });
     } else if (typeFlag === 0 || typeFlag === 48) {
-      const filePath = path6.join(destDir, fullName);
-      fs3.mkdirSync(path6.dirname(filePath), { recursive: true });
+      const filePath = path5.join(destDir, fullName);
+      fs2.mkdirSync(path5.dirname(filePath), { recursive: true });
       const fileData = decompressed.subarray(offset, offset + size);
-      fs3.writeFileSync(filePath, fileData);
+      fs2.writeFileSync(filePath, fileData);
     }
     const dataBlocks = Math.ceil(size / 512);
     offset += dataBlocks * 512;
@@ -10014,9 +9121,9 @@ function extractTarGz(buffer, destDir) {
 }
 function getMachineId() {
   if (_machineId) return _machineId;
-  const idPath = path6.join(app.getPath("userData"), ".machine-id");
+  const idPath = path5.join(app.getPath("userData"), ".machine-id");
   try {
-    const existing = fs3.readFileSync(idPath, "utf-8").trim();
+    const existing = fs2.readFileSync(idPath, "utf-8").trim();
     if (existing) {
       _machineId = existing;
       return existing;
@@ -10025,7 +9132,7 @@ function getMachineId() {
   }
   const id = `${randomHex(8)}-${randomHex(4)}-${randomHex(4)}-${randomHex(4)}-${randomHex(12)}`;
   try {
-    fs3.writeFileSync(idPath, id);
+    fs2.writeFileSync(idPath, id);
   } catch {
   }
   _machineId = id;
@@ -10035,13 +9142,13 @@ function randomHex(length) {
   const bytes = require("crypto").randomBytes(Math.ceil(length / 2));
   return bytes.toString("hex").slice(0, length);
 }
-async function uninstallExtension2(name) {
+async function uninstallExtension(name) {
   const installPath = getInstalledPath(name);
-  if (!fs3.existsSync(installPath)) {
+  if (!fs2.existsSync(installPath)) {
     return true;
   }
   try {
-    fs3.rmSync(installPath, { recursive: true, force: true });
+    fs2.rmSync(installPath, { recursive: true, force: true });
     console.log(`Extension "${name}" uninstalled.`);
     reportUninstall(name, getMachineId()).catch(() => {
     });
@@ -10063,15 +9170,15 @@ function extensionNameFromSlug(slug) {
 }
 function readInstalledPackage(slug) {
   const extensionPath = resolveInstalledExtensionPathForRaymes(slug);
-  const pkgPath = extensionPath ? path6.join(extensionPath, "package.json") : "";
-  if (!fs3.existsSync(pkgPath)) return {};
+  const pkgPath = extensionPath ? path5.join(extensionPath, "package.json") : "";
+  if (!fs2.existsSync(pkgPath)) return {};
   try {
-    return JSON.parse(fs3.readFileSync(pkgPath, "utf-8"));
+    return JSON.parse(fs2.readFileSync(pkgPath, "utf-8"));
   } catch {
     return {};
   }
 }
-function resolvePlatformDefault2(value) {
+function resolvePlatformDefault(value) {
   const platformKey = process.platform === "win32" ? "Windows" : "macOS";
   if (value && typeof value === "object" && !Array.isArray(value) && (Object.prototype.hasOwnProperty.call(value, "macOS") || Object.prototype.hasOwnProperty.call(value, "Windows"))) {
     if (Object.prototype.hasOwnProperty.call(value, platformKey)) {
@@ -10103,14 +9210,14 @@ function resolveInstalledIconPath(extensionPath, icon) {
   if (/^https?:\/\//i.test(icon)) return icon;
   const normalized = icon.replace(/^\.?\//, "");
   const candidates = [
-    path6.join(extensionPath, normalized),
-    path6.join(extensionPath, "assets", normalized)
+    path5.join(extensionPath, normalized),
+    path5.join(extensionPath, "assets", normalized)
   ];
-  return candidates.find((candidate) => fs3.existsSync(candidate));
+  return candidates.find((candidate) => fs2.existsSync(candidate));
 }
 function readAppBundleIdentifier(appPath) {
-  const infoPlistPath = path6.join(appPath, "Contents", "Info.plist");
-  if (!fs3.existsSync(infoPlistPath)) return void 0;
+  const infoPlistPath = path5.join(appPath, "Contents", "Info.plist");
+  if (!fs2.existsSync(infoPlistPath)) return void 0;
   try {
     return (0, import_child_process2.execFileSync)("/usr/bin/plutil", ["-extract", "CFBundleIdentifier", "raw", "-o", "-", infoPlistPath], {
       encoding: "utf8",
@@ -10121,7 +9228,7 @@ function readAppBundleIdentifier(appPath) {
   }
 }
 function appPickerValue(name, appPath) {
-  if (!fs3.existsSync(appPath)) return null;
+  if (!fs2.existsSync(appPath)) return null;
   return {
     name,
     path: appPath,
@@ -10165,12 +9272,12 @@ function listInstalledRegistryExtensions() {
       owner: owner || void 0,
       authorIconUrl,
       iconPath,
-      packageJsonPath: path6.join(extensionPath, "package.json"),
+      packageJsonPath: path5.join(extensionPath, "package.json"),
       extensionPath,
       commands: (commandsBySlug.get(slug) || []).map(normalizeRegistryCommand),
       installedAt: (() => {
         try {
-          return fs3.statSync(extensionPath).mtimeMs;
+          return fs2.statSync(extensionPath).mtimeMs;
         } catch {
           return Date.now();
         }
@@ -10182,22 +9289,59 @@ function resolveInstalledPackageJsonPath(extensionId) {
   const slug = slugFromRaymesExtensionId(extensionId);
   if (!slug) return null;
   const extensionPath = resolveInstalledExtensionPathForRaymes(slug);
-  const pkgPath = extensionPath ? path6.join(extensionPath, "package.json") : "";
-  return fs3.existsSync(pkgPath) ? pkgPath : null;
+  const pkgPath = extensionPath ? path5.join(extensionPath, "package.json") : "";
+  return fs2.existsSync(pkgPath) ? pkgPath : null;
+}
+function searchTokens(value) {
+  return String(value || "").toLowerCase().split(/[^a-z0-9]+/g).filter(Boolean);
+}
+function tokenScore(tokens, query, exactScore, prefixScore) {
+  if (tokens.some((token) => token === query)) return exactScore;
+  if (tokens.some((token) => token.startsWith(query))) return prefixScore;
+  return 0;
+}
+function scoreCatalogEntrySearch(entry, query) {
+  const q = String(query || "").trim().toLowerCase();
+  if (!q) return 1;
+  const name = String(entry.name || "").toLowerCase();
+  const title = String(entry.title || "").toLowerCase();
+  const author = String(entry.author || "").toLowerCase();
+  const categories = entry.categories || [];
+  const commands = entry.commands || [];
+  const titleTokens = searchTokens(entry.title);
+  const nameTokens = searchTokens(entry.name);
+  const authorTokens = searchTokens(author);
+  const categoryTokens = searchTokens(categories.join(" "));
+  const commandTokens = searchTokens(
+    commands.map((command) => `${command.name} ${command.title}`).join(" ")
+  );
+  const descriptionTokens = searchTokens(entry.description);
+  let score = 0;
+  if (name === q || title === q) score += 1e4;
+  if (name.startsWith(q) || title.startsWith(q)) score += 9e3;
+  score += tokenScore(nameTokens, q, 8200, 7200);
+  score += tokenScore(titleTokens, q, 8e3, 7e3);
+  score += tokenScore(categoryTokens, q, 3e3, 2200);
+  score += tokenScore(authorTokens, q, 2200, 1600);
+  score += tokenScore(commandTokens, q, 1800, 1200);
+  score += tokenScore(descriptionTokens, q, 900, 550);
+  if (q.length >= 4) {
+    if (name.includes(q) || title.includes(q)) score += 1400;
+    if (entry.description.toLowerCase().includes(q)) score += 350;
+  }
+  if (score > 0 && entry.installCount && entry.installCount > 0) {
+    score += Math.min(500, Math.log10(entry.installCount) * 80);
+  }
+  return score;
 }
 async function searchExtensionCatalog(query) {
   const q = String(query || "").trim().toLowerCase();
   const catalog = await getCatalog(false);
-  return catalog.filter((entry) => {
-    if (!q) return true;
-    return [
-      entry.name,
-      entry.title,
-      entry.description,
-      entry.author,
-      ...entry.categories || []
-    ].join(" ").toLowerCase().includes(q);
-  }).slice(0, 200).map((entry) => ({
+  return catalog.map((entry) => {
+    return { entry, score: scoreCatalogEntrySearch(entry, q) };
+  }).filter(({ score }) => score > 0).sort((a, b) => {
+    return b.score - a.score || (b.entry.installCount ?? 0) - (a.entry.installCount ?? 0) || a.entry.title.localeCompare(b.entry.title);
+  }).slice(0, 200).map(({ entry }) => ({
     id: normalizeRaymesExtensionId(entry.name),
     name: entry.title || extensionNameFromSlug(entry.name),
     description: entry.description || "",
@@ -10218,7 +9362,7 @@ async function installRegistryExtension(extensionIdOrSlug) {
   const slug = slugFromRaymesExtensionId(extensionIdOrSlug);
   if (!slug) throw new Error("A valid extension id is required");
   extensionRegistryEvents.emit("progress", { id: normalizeRaymesExtensionId(slug), progress: 5 });
-  const ok = await installExtension2(slug);
+  const ok = await installExtension(slug);
   extensionRegistryEvents.emit("progress", { id: normalizeRaymesExtensionId(slug), progress: ok ? 100 : 0 });
   if (!ok) throw new Error(`Failed to install extension: ${slug}`);
   const installed = listInstalledRegistryExtensions().find((entry) => entry.slug === slug);
@@ -10234,8 +9378,8 @@ function uninstallRegistryExtension(extensionIdOrSlug) {
     getLegacyInstalledPath(slug),
     getLegacyRegistryInstalledPath(slug)
   ]) {
-    if (fs3.existsSync(candidate)) {
-      fs3.rmSync(candidate, { recursive: true, force: true });
+    if (fs2.existsSync(candidate)) {
+      fs2.rmSync(candidate, { recursive: true, force: true });
       removed = true;
     }
   }
@@ -10251,7 +9395,7 @@ function getExtensionPreferences(extensionId, commandName2) {
   const applyDefaults = (preferences) => {
     for (const pref of preferences || []) {
       if (!pref?.name) continue;
-      const resolvedDefault = resolvePlatformDefault2(pref.default);
+      const resolvedDefault = resolvePlatformDefault(pref.default);
       if (resolvedDefault !== void 0) {
         values[pref.name] = resolvedDefault;
       } else if (pref.type === "checkbox") {
@@ -10269,10 +9413,10 @@ function getExtensionPreferences(extensionId, commandName2) {
   const command = Array.isArray(pkg.commands) ? pkg.commands.find((cmd) => cmd?.name === commandName2) : null;
   applyDefaults(Array.isArray(command?.preferences) ? command.preferences : []);
   const extensionPath = resolveInstalledExtensionPathForRaymes(slug) || getInstalledPath(slug);
-  const preferencesPath = path6.join(extensionPath, "preferences.json");
-  if (fs3.existsSync(preferencesPath)) {
+  const preferencesPath = path5.join(extensionPath, "preferences.json");
+  if (fs2.existsSync(preferencesPath)) {
     try {
-      const saved = JSON.parse(fs3.readFileSync(preferencesPath, "utf-8"));
+      const saved = JSON.parse(fs2.readFileSync(preferencesPath, "utf-8"));
       if (saved && typeof saved === "object") {
         Object.assign(values, saved);
         if (commandName2 && saved.commands?.[commandName2]) {
@@ -10296,7 +9440,7 @@ function getExtensionPreferenceSetup(extensionId, commandName2) {
     commandTitle: String(command?.title || commandName2)
   })) : [];
   const preferences = [...extensionPreferences, ...commandPreferences];
-  const preferencesPath = path6.join(extensionPath, "preferences.json");
+  const preferencesPath = path5.join(extensionPath, "preferences.json");
   return {
     extensionId: normalizeRaymesExtensionId(slug),
     commandName: commandName2,
@@ -10304,7 +9448,7 @@ function getExtensionPreferenceSetup(extensionId, commandName2) {
     iconPath: resolveInstalledIconPath(extensionPath, pkg.icon || "icon.png") || void 0,
     preferences,
     values: getExtensionPreferences(extensionId, commandName2),
-    hasSavedPreferences: fs3.existsSync(preferencesPath)
+    hasSavedPreferences: fs2.existsSync(preferencesPath)
   };
 }
 function shouldShowExtensionPreferenceSetup(extensionId, commandName2) {
@@ -10330,12 +9474,12 @@ function shouldShowExtensionPreferenceSetup(extensionId, commandName2) {
 function saveExtensionPreferences(extensionId, values, commandName2) {
   const slug = slugFromRaymesExtensionId(extensionId);
   const extensionPath = resolveInstalledExtensionPathForRaymes(slug) || getInstalledPath(slug);
-  fs3.mkdirSync(extensionPath, { recursive: true });
-  const preferencesPath = path6.join(extensionPath, "preferences.json");
+  fs2.mkdirSync(extensionPath, { recursive: true });
+  const preferencesPath = path5.join(extensionPath, "preferences.json");
   let existing = {};
-  if (fs3.existsSync(preferencesPath)) {
+  if (fs2.existsSync(preferencesPath)) {
     try {
-      const parsed = JSON.parse(fs3.readFileSync(preferencesPath, "utf-8"));
+      const parsed = JSON.parse(fs2.readFileSync(preferencesPath, "utf-8"));
       if (parsed && typeof parsed === "object") existing = parsed;
     } catch {
     }
@@ -10352,18 +9496,18 @@ function saveExtensionPreferences(extensionId, values, commandName2) {
       ...values
     };
   }
-  fs3.writeFileSync(preferencesPath, JSON.stringify(existing, null, 2));
+  fs2.writeFileSync(preferencesPath, JSON.stringify(existing, null, 2));
   return getExtensionPreferences(extensionId, commandName2);
 }
-var import_child_process2, import_events2, fs3, path6, zlib, extensionRegistryEvents, GITHUB_RAW, GITHUB_API, GITHUB_TREE_API, RAYMES_EXTENSIONS_GIT, REPO_TREE_TTL_MS, repoTreeCache, CATALOG_VERSION, CATALOG_TTL, catalogCache2, _machineId;
+var import_child_process2, import_events2, fs2, path5, zlib, extensionRegistryEvents, GITHUB_RAW, GITHUB_API, GITHUB_TREE_API, RAYMES_EXTENSIONS_GIT, REPO_TREE_TTL_MS, repoTreeCache, CATALOG_VERSION, CATALOG_TTL, catalogCache, _machineId;
 var init_extension_registry = __esm({
   "src/main/extension-registry.ts"() {
     "use strict";
     init_electron_shim();
     import_child_process2 = require("child_process");
     import_events2 = require("events");
-    fs3 = __toESM(require("fs"));
-    path6 = __toESM(require("path"));
+    fs2 = __toESM(require("fs"));
+    path5 = __toESM(require("path"));
     zlib = __toESM(require("zlib"));
     init_extension_platform();
     init_extension_builder();
@@ -10378,8 +9522,961 @@ var init_extension_registry = __esm({
     repoTreeCache = null;
     CATALOG_VERSION = 6;
     CATALOG_TTL = 24 * 60 * 60 * 1e3;
-    catalogCache2 = null;
+    catalogCache = null;
     _machineId = null;
+  }
+});
+
+// src/main/extension-builder.ts
+var extension_builder_exports = {};
+__export(extension_builder_exports, {
+  buildAllCommands: () => buildAllCommands,
+  buildSingleCommand: () => buildSingleCommand,
+  discoverInstalledExtensionCommands: () => discoverInstalledExtensionCommands,
+  getExtensionBundle: () => getExtensionBundle,
+  getInstalledExtensionsSettingsSchema: () => getInstalledExtensionsSettingsSchema
+});
+function requireEsbuild() {
+  configurePackagedEsbuildBinary();
+  return require("esbuild");
+}
+function legacyCheerioInteropPlugin() {
+  return {
+    name: "legacy-cheerio-default-interop",
+    setup(build) {
+      build.onLoad({ filter: /\.[cm]?[jt]sx?$/ }, (args) => {
+        const source = fs3.readFileSync(args.path, "utf8");
+        if (!/import\s+[A-Za-z_$][\w$]*\s+from\s+['"]cheerio['"]/.test(source)) return null;
+        const extension = path6.extname(args.path).toLowerCase();
+        const loader = extension.endsWith("x") ? extension.slice(1) : extension.slice(1) || "js";
+        return {
+          contents: source.replace(
+            /import\s+([A-Za-z_$][\w$]*)\s+from\s+(['"])cheerio\2/g,
+            "import * as $1 from $2cheerio$2"
+          ),
+          loader
+        };
+      });
+    }
+  };
+}
+function getManagedExtensionsDir() {
+  const dir = path6.join(app.getPath("userData"), "extensions");
+  if (!fs3.existsSync(dir)) {
+    fs3.mkdirSync(dir, { recursive: true });
+  }
+  return dir;
+}
+function getBuildDir(extPath) {
+  const dir = path6.join(extPath, ".sc-build");
+  if (!fs3.existsSync(dir)) {
+    fs3.mkdirSync(dir, { recursive: true });
+  }
+  return dir;
+}
+function expandHome(inputPath) {
+  const raw = String(inputPath || "").trim();
+  if (!raw) return "";
+  if (raw.startsWith("~/")) return path6.join(os.homedir(), raw.slice(2));
+  return raw;
+}
+function normalizeFsPath(inputPath) {
+  return path6.resolve(expandHome(inputPath));
+}
+function normalizeExtensionName(name) {
+  const raw = String(name || "").trim();
+  if (!raw) return "";
+  return raw.replace(/^@/, "").replace(/^raycast\./, "").replace(/[\\/]/g, "-");
+}
+function getConfiguredExtensionRoots() {
+  const settingsPaths = [];
+  const envPaths = String(process.env.SUPERCMD_EXTENSION_PATHS || "").split(path6.delimiter).map((value) => value.trim()).filter(Boolean);
+  const unique = /* @__PURE__ */ new Set();
+  for (const root of [
+    getManagedExtensionsDir(),
+    path6.join(getManagedExtensionsDir(), "packages"),
+    path6.join(app.getPath("userData"), "extension-registry", "packages"),
+    ...settingsPaths,
+    ...envPaths
+  ]) {
+    const normalized = normalizeFsPath(root);
+    if (!normalized) continue;
+    unique.add(normalized);
+  }
+  return [...unique];
+}
+function collectInstalledExtensions() {
+  const results = [];
+  const seen = /* @__PURE__ */ new Set();
+  const addIfValid = (extPath, sourceRoot, fallbackName) => {
+    const pkgPath = path6.join(extPath, "package.json");
+    if (!fs3.existsSync(pkgPath)) return;
+    try {
+      if (!fs3.statSync(extPath).isDirectory()) return;
+    } catch {
+      return;
+    }
+    const extName = normalizeExtensionName(fallbackName);
+    if (!extName) return;
+    const dedupeKey = extName.toLowerCase();
+    if (seen.has(dedupeKey)) return;
+    seen.add(dedupeKey);
+    results.push({ extName, extPath, sourceRoot });
+  };
+  for (const sourceRoot of getConfiguredExtensionRoots()) {
+    if (!fs3.existsSync(sourceRoot)) continue;
+    const sourceRootPkg = path6.join(sourceRoot, "package.json");
+    if (fs3.existsSync(sourceRootPkg)) {
+      addIfValid(sourceRoot, sourceRoot, path6.basename(sourceRoot));
+      continue;
+    }
+    let entries = [];
+    try {
+      entries = fs3.readdirSync(sourceRoot);
+    } catch {
+      continue;
+    }
+    for (const entry of entries) {
+      addIfValid(path6.join(sourceRoot, entry), sourceRoot, entry);
+    }
+  }
+  return results;
+}
+function resolveInstalledExtensionPath(extName) {
+  const normalized = normalizeExtensionName(extName);
+  if (!normalized) return null;
+  const match = collectInstalledExtensions().find((entry) => entry.extName === normalized);
+  return match?.extPath || null;
+}
+function getExtensionIconDataUrl(extPath, iconFile) {
+  const candidates = [
+    path6.join(extPath, "assets", iconFile),
+    path6.join(extPath, iconFile)
+  ];
+  for (const p of candidates) {
+    if (!fs3.existsSync(p)) continue;
+    try {
+      const ext = path6.extname(p).toLowerCase();
+      const data = fs3.readFileSync(p);
+      if (data.length < 50) continue;
+      const mime = ext === ".svg" ? "image/svg+xml" : ext === ".jpg" || ext === ".jpeg" ? "image/jpeg" : "image/png";
+      return `data:${mime};base64,${data.toString("base64")}`;
+    } catch {
+    }
+  }
+  return void 0;
+}
+function resolvePlatformDefault2(value) {
+  const platformKey = process.platform === "win32" ? "Windows" : "macOS";
+  if (value && typeof value === "object" && !Array.isArray(value) && (Object.prototype.hasOwnProperty.call(value, "macOS") || Object.prototype.hasOwnProperty.call(value, "Windows"))) {
+    if (Object.prototype.hasOwnProperty.call(value, platformKey)) {
+      return value[platformKey];
+    }
+    return value.macOS ?? value.Windows;
+  }
+  return value;
+}
+function normalizePreferenceSchema(pref, scope) {
+  if (!pref || typeof pref !== "object" || !pref.name) return null;
+  return {
+    scope,
+    name: String(pref.name),
+    title: pref.title,
+    label: pref.label,
+    description: pref.description,
+    placeholder: pref.placeholder,
+    required: Boolean(pref.required),
+    type: pref.type,
+    default: resolvePlatformDefault2(pref.default),
+    data: Array.isArray(pref.data) ? pref.data : void 0
+  };
+}
+function discoverInstalledExtensionCommands() {
+  const results = [];
+  for (const source of collectInstalledExtensions()) {
+    const extPath = source.extPath;
+    const pkgPath = path6.join(extPath, "package.json");
+    const extName = source.extName;
+    try {
+      const pkg = JSON.parse(fs3.readFileSync(pkgPath, "utf-8"));
+      if (!isManifestPlatformCompatible(pkg)) continue;
+      const iconDataUrl = getExtensionIconDataUrl(
+        extPath,
+        pkg.icon || "icon.png"
+      );
+      const ownerRaw = pkg.owner || pkg.author || "";
+      const owner = (typeof ownerRaw === "object" ? ownerRaw?.name || "" : String(ownerRaw || "")).trim();
+      for (const cmd of pkg.commands || []) {
+        if (!cmd.name) continue;
+        if (!isCommandPlatformCompatible(cmd)) continue;
+        results.push({
+          id: `ext-${extName}-${cmd.name}`,
+          title: cmd.title || cmd.name,
+          extensionTitle: pkg.title || extName,
+          extName,
+          cmdName: cmd.name,
+          owner: owner || void 0,
+          description: cmd.description || "",
+          mode: cmd.mode || "view",
+          interval: typeof cmd.interval === "string" ? cmd.interval : void 0,
+          disabledByDefault: Boolean(cmd.disabledByDefault),
+          commandArgumentDefinitions: Array.isArray(cmd.arguments) ? cmd.arguments.filter((arg) => arg && arg.name).map((arg) => ({
+            name: String(arg.name),
+            required: Boolean(arg.required),
+            type: arg.type,
+            placeholder: arg.placeholder,
+            title: arg.title,
+            data: Array.isArray(arg.data) ? arg.data : void 0
+          })) : [],
+          keywords: [
+            extName,
+            pkg.title || "",
+            cmd.name,
+            cmd.title || "",
+            cmd.description || ""
+          ].filter(Boolean).map((s) => s.toLowerCase()),
+          iconDataUrl
+        });
+      }
+    } catch {
+    }
+  }
+  return results;
+}
+function getInstalledExtensionsSettingsSchema() {
+  const results = [];
+  for (const source of collectInstalledExtensions()) {
+    const extPath = source.extPath;
+    const pkgPath = path6.join(extPath, "package.json");
+    const extName = source.extName;
+    try {
+      const pkg = JSON.parse(fs3.readFileSync(pkgPath, "utf-8"));
+      if (!isManifestPlatformCompatible(pkg)) continue;
+      const iconDataUrl = getExtensionIconDataUrl(extPath, pkg.icon || "icon.png");
+      const ownerRaw = pkg.owner || pkg.author || "";
+      const owner = typeof ownerRaw === "object" ? ownerRaw.name || "" : String(ownerRaw || "");
+      const extensionPreferences = Array.isArray(pkg.preferences) ? pkg.preferences.map((pref) => normalizePreferenceSchema(pref, "extension")).filter(Boolean) : [];
+      const commands = Array.isArray(pkg.commands) ? pkg.commands.filter((cmd) => cmd && cmd.name && isCommandPlatformCompatible(cmd)).map((cmd) => ({
+        name: cmd.name,
+        title: cmd.title || cmd.name,
+        description: cmd.description || "",
+        mode: cmd.mode || "view",
+        interval: typeof cmd.interval === "string" ? cmd.interval : void 0,
+        disabledByDefault: Boolean(cmd.disabledByDefault),
+        preferences: Array.isArray(cmd.preferences) ? cmd.preferences.map((pref) => normalizePreferenceSchema(pref, "command")).filter(Boolean) : []
+      })) : [];
+      results.push({
+        extName,
+        title: pkg.title || extName,
+        description: pkg.description || "",
+        owner,
+        iconDataUrl,
+        preferences: extensionPreferences,
+        commands
+      });
+    } catch {
+    }
+  }
+  return results.sort((a, b) => a.title.localeCompare(b.title));
+}
+function getInstallableRuntimeDeps(pkg) {
+  const deps = {
+    ...pkg?.dependencies || {},
+    ...pkg?.optionalDependencies || {}
+  };
+  return Object.entries(deps).filter(([name]) => typeof name === "string" && !name.startsWith("@raycast/")).map(([name, version]) => `${name}@${String(version || "").trim()}`).filter((value) => {
+    const atIndex = value.lastIndexOf("@");
+    return atIndex > 0 && atIndex < value.length - 1;
+  });
+}
+function extensionRequiresNodeModules(pkg) {
+  return getInstallableRuntimeDeps(pkg).length > 0;
+}
+function parseJsonc(source) {
+  let out = "";
+  let i = 0;
+  const n = source.length;
+  while (i < n) {
+    const ch = source[i];
+    if (ch === '"') {
+      out += ch;
+      i++;
+      while (i < n) {
+        const c = source[i];
+        out += c;
+        i++;
+        if (c === "\\" && i < n) {
+          out += source[i];
+          i++;
+          continue;
+        }
+        if (c === '"') break;
+      }
+      continue;
+    }
+    if (ch === "/" && source[i + 1] === "/") {
+      i += 2;
+      while (i < n && source[i] !== "\n") i++;
+      continue;
+    }
+    if (ch === "/" && source[i + 1] === "*") {
+      i += 2;
+      while (i < n && !(source[i] === "*" && source[i + 1] === "/")) i++;
+      i += 2;
+      continue;
+    }
+    out += ch;
+    i++;
+  }
+  out = out.replace(/,(\s*[}\]])/g, "$1");
+  return JSON.parse(out);
+}
+function getExtensionCompilerOptions(extPath) {
+  const tsconfigPath = path6.join(extPath, "tsconfig.json");
+  if (!fs3.existsSync(tsconfigPath)) return {};
+  try {
+    const parsed = parseJsonc(fs3.readFileSync(tsconfigPath, "utf-8"));
+    const compilerOptions = parsed && typeof parsed === "object" && parsed.compilerOptions && typeof parsed.compilerOptions === "object" ? parsed.compilerOptions : {};
+    const options = {};
+    if (typeof compilerOptions.baseUrl === "string" && compilerOptions.baseUrl.trim()) {
+      options.baseUrl = compilerOptions.baseUrl;
+    }
+    if (compilerOptions.paths && typeof compilerOptions.paths === "object" && !Array.isArray(compilerOptions.paths)) {
+      options.paths = compilerOptions.paths;
+      if (!options.baseUrl) options.baseUrl = ".";
+    }
+    if (typeof compilerOptions.jsx === "string" && compilerOptions.jsx.trim()) {
+      options.jsx = compilerOptions.jsx;
+    }
+    if (typeof compilerOptions.jsxImportSource === "string" && compilerOptions.jsxImportSource.trim()) {
+      options.jsxImportSource = compilerOptions.jsxImportSource;
+    }
+    return options;
+  } catch (error) {
+    console.warn(`Failed to parse tsconfig for ${path6.basename(extPath)}:`, error?.message || error);
+    return {};
+  }
+}
+function getEsbuildTsconfigRaw(extPath) {
+  const extensionCompilerOptions = getExtensionCompilerOptions(extPath);
+  return JSON.stringify({
+    compilerOptions: {
+      target: "ES2020",
+      jsx: "react-jsx",
+      jsxImportSource: "react",
+      strict: false,
+      esModuleInterop: true,
+      moduleResolution: "node",
+      ...extensionCompilerOptions
+    }
+  });
+}
+function resolveEntryFile(extPath, cmd) {
+  const cmdName = String(cmd?.name || "").trim();
+  if (!cmdName) return null;
+  const srcDir = path6.join(extPath, "src");
+  const validExt = /\.(tsx?|jsx?)$/i;
+  const explicitEntry = typeof cmd?.path === "string" ? cmd.path : typeof cmd?.entrypoint === "string" ? cmd.entrypoint : typeof cmd?.entry === "string" ? cmd.entry : typeof cmd?.file === "string" ? cmd.file : typeof cmd?.source === "string" ? cmd.source : "";
+  const candidates = [
+    explicitEntry ? path6.join(extPath, explicitEntry) : "",
+    path6.join(srcDir, `${cmdName}.tsx`),
+    path6.join(srcDir, `${cmdName}.ts`),
+    path6.join(srcDir, `${cmdName}.jsx`),
+    path6.join(srcDir, `${cmdName}.js`),
+    path6.join(srcDir, cmdName, "index.tsx"),
+    path6.join(srcDir, cmdName, "index.ts"),
+    path6.join(srcDir, cmdName, "index.jsx"),
+    path6.join(srcDir, cmdName, "index.js"),
+    path6.join(srcDir, "commands", `${cmdName}.tsx`),
+    path6.join(srcDir, "commands", `${cmdName}.ts`),
+    path6.join(srcDir, "commands", `${cmdName}.jsx`),
+    path6.join(srcDir, "commands", `${cmdName}.js`)
+  ].filter(Boolean);
+  const found = candidates.find((p) => fs3.existsSync(p));
+  if (found) return found;
+  if (!fs3.existsSync(srcDir)) return null;
+  const stack = [srcDir];
+  const normalized = cmdName.toLowerCase();
+  while (stack.length > 0) {
+    const dir = stack.pop();
+    let entries = [];
+    try {
+      entries = fs3.readdirSync(dir);
+    } catch {
+      continue;
+    }
+    for (const entry of entries) {
+      const full = path6.join(dir, entry);
+      let stat2;
+      try {
+        stat2 = fs3.statSync(full);
+      } catch {
+        continue;
+      }
+      if (stat2.isDirectory()) {
+        stack.push(full);
+        continue;
+      }
+      if (!validExt.test(entry)) continue;
+      const base = path6.basename(entry, path6.extname(entry)).toLowerCase();
+      if (base === normalized) return full;
+    }
+  }
+  return null;
+}
+async function buildAllCommands(extName, extPathOverride) {
+  const extPath = extPathOverride ? normalizeFsPath(extPathOverride) : resolveInstalledExtensionPath(extName);
+  if (!extPath) {
+    console.error(`Extension path not found for ${extName}`);
+    return 0;
+  }
+  const pkgPath = path6.join(extPath, "package.json");
+  if (!fs3.existsSync(pkgPath)) {
+    console.error(`No package.json found for extension ${extName}`);
+    return 0;
+  }
+  let commands;
+  let requiresNodeModules = false;
+  let manifestExternal = [];
+  try {
+    const pkg = JSON.parse(fs3.readFileSync(pkgPath, "utf-8"));
+    if (!isManifestPlatformCompatible(pkg)) {
+      console.warn(`Skipping build for incompatible extension ${extName}`);
+      return 0;
+    }
+    commands = pkg.commands || [];
+    requiresNodeModules = extensionRequiresNodeModules(pkg);
+    manifestExternal = Array.isArray(pkg.external) ? pkg.external.filter((v) => typeof v === "string" && v.trim().length > 0) : [];
+  } catch {
+    return 0;
+  }
+  if (commands.length === 0) return 0;
+  const esbuild = requireEsbuild();
+  const extNodeModules = path6.join(extPath, "node_modules");
+  if (requiresNodeModules && !fs3.existsSync(extNodeModules)) {
+    try {
+      const { installExtensionDeps: installExtensionDeps2 } = (init_extension_registry(), __toCommonJS(extension_registry_exports));
+      await installExtensionDeps2(extPath);
+    } catch (e) {
+      console.error(`Failed to install dependencies for ${extName}:`, e?.message || e);
+      return 0;
+    }
+    if (!fs3.existsSync(extNodeModules)) {
+      console.error(`Dependencies missing for ${extName}: ${extNodeModules} not found`);
+      return 0;
+    }
+  }
+  const buildDir = getBuildDir(extPath);
+  try {
+    fs3.rmSync(buildDir, { recursive: true, force: true });
+  } catch {
+  }
+  fs3.mkdirSync(buildDir, { recursive: true });
+  let built = 0;
+  for (const cmd of commands) {
+    if (!cmd.name) continue;
+    if (!isCommandPlatformCompatible(cmd)) continue;
+    const entryFile = resolveEntryFile(extPath, cmd);
+    if (!entryFile) {
+      console.warn(`No entry file for ${extName}/${cmd.name}, skipping`);
+      continue;
+    }
+    const outFile = path6.join(buildDir, `${cmd.name}.js`);
+    fs3.mkdirSync(path6.dirname(outFile), { recursive: true });
+    try {
+      console.log(`  Building ${extName}/${cmd.name}\u2026`);
+      await runEsbuildBuild(
+        esbuild,
+        {
+          entryPoints: [entryFile],
+          absWorkingDir: extPath,
+          bundle: true,
+          format: "cjs",
+          platform: "node",
+          conditions: ["require", "node"],
+          outfile: outFile,
+          plugins: [
+            legacyCheerioInteropPlugin(),
+            // Mark swift: imports as external so fakeRequire can handle them at runtime
+            {
+              name: "swift-external",
+              setup(build) {
+                build.onResolve({ filter: /^swift:/ }, (args) => ({
+                  path: args.path,
+                  external: true
+                }));
+              }
+            }
+          ],
+          external: [
+            // React — provided by the renderer at runtime
+            "react",
+            "react-dom",
+            "react-dom/*",
+            "react/jsx-runtime",
+            "react/jsx-dev-runtime",
+            // Raycast — provided by our shim
+            "@raycast/api",
+            "@raycast/utils",
+            // Native C++ addons — cannot be bundled, we stub them at runtime
+            "re2",
+            "better-sqlite3",
+            "fsevents",
+            // Cross-extension calls — not supported, stubbed
+            "raycast-cross-extension",
+            // Fetch libs — use runtime shims in renderer instead of bundling Node internals
+            "node-fetch",
+            "undici",
+            "undici/*",
+            // HTTP / file-download / archive packages — must be kept external so our renderer
+            // shim can intercept them and route file I/O through the main process (which has
+            // real filesystem access). Bundling them inline breaks binary downloads because the
+            // browser renderer cannot do streaming file writes or archive extraction natively.
+            "axios",
+            "tar",
+            "extract-zip",
+            "sha256-file",
+            // Respect extension-defined externals from manifest
+            ...manifestExternal,
+            // Node.js built-ins — stubbed at runtime in the renderer
+            ...nodeBuiltins
+          ],
+          nodePaths: fs3.existsSync(extNodeModules) ? [extNodeModules] : [],
+          target: "es2020",
+          jsx: "automatic",
+          jsxImportSource: "react",
+          tsconfigRaw: getEsbuildTsconfigRaw(extPath),
+          define: {
+            "process.env.NODE_ENV": '"production"',
+            "global": "globalThis"
+          },
+          logLevel: "warning"
+        },
+        extPath,
+        `${extName}/${cmd.name}`
+      );
+      if (fs3.existsSync(outFile)) {
+        built++;
+      }
+    } catch (e) {
+      console.error(`  esbuild failed for ${extName}/${cmd.name}:`, e);
+    }
+  }
+  console.log(`Built ${built}/${commands.length} commands for ${extName}`);
+  return built;
+}
+function parsePreferences(pkg, cmdName) {
+  const extensionPrefs = {};
+  const commandPrefs = {};
+  const definitions = [];
+  for (const pref of pkg.preferences || []) {
+    if (!pref.name) continue;
+    const resolvedDefault = resolvePlatformDefault2(pref.default);
+    definitions.push({
+      scope: "extension",
+      name: pref.name,
+      title: pref.title,
+      description: pref.description,
+      placeholder: pref.placeholder,
+      required: Boolean(pref.required),
+      type: pref.type,
+      default: resolvedDefault,
+      data: Array.isArray(pref.data) ? pref.data : void 0
+    });
+    if (resolvedDefault !== void 0) {
+      extensionPrefs[pref.name] = resolvedDefault;
+    } else if (pref.type === "checkbox") {
+      extensionPrefs[pref.name] = false;
+    } else if (pref.type === "textfield" || pref.type === "password") {
+      extensionPrefs[pref.name] = "";
+    } else if (pref.type === "dropdown") {
+      extensionPrefs[pref.name] = pref.data?.[0]?.value ?? "";
+    }
+  }
+  const cmd = (pkg.commands || []).find((c) => c.name === cmdName);
+  if (cmd?.preferences) {
+    for (const pref of cmd.preferences) {
+      if (!pref.name) continue;
+      const resolvedDefault = resolvePlatformDefault2(pref.default);
+      definitions.push({
+        scope: "command",
+        name: pref.name,
+        title: pref.title,
+        description: pref.description,
+        placeholder: pref.placeholder,
+        required: Boolean(pref.required),
+        type: pref.type,
+        default: resolvedDefault,
+        data: Array.isArray(pref.data) ? pref.data : void 0
+      });
+      if (resolvedDefault !== void 0) {
+        commandPrefs[pref.name] = resolvedDefault;
+      } else if (pref.type === "checkbox") {
+        commandPrefs[pref.name] = false;
+      } else if (pref.type === "textfield" || pref.type === "password") {
+        commandPrefs[pref.name] = "";
+      } else if (pref.type === "dropdown") {
+        commandPrefs[pref.name] = pref.data?.[0]?.value ?? "";
+      }
+    }
+  }
+  return { extensionPrefs, commandPrefs, definitions };
+}
+async function buildSingleCommand(extName, cmdName) {
+  const extPath = resolveInstalledExtensionPath(extName);
+  if (!extPath) {
+    console.error(`buildSingleCommand: extension path not found for ${extName}`);
+    return false;
+  }
+  const pkgPath = path6.join(extPath, "package.json");
+  if (!fs3.existsSync(pkgPath)) {
+    console.error(`buildSingleCommand: package.json not found at ${pkgPath}`);
+    return false;
+  }
+  let cmd;
+  let requiresNodeModules = false;
+  let manifestExternal = [];
+  try {
+    const pkg = JSON.parse(fs3.readFileSync(pkgPath, "utf-8"));
+    if (!isManifestPlatformCompatible(pkg)) {
+      console.error(`buildSingleCommand: platform not compatible for ${extName}`);
+      return false;
+    }
+    const commands = pkg.commands || [];
+    cmd = commands.find((c) => c.name === cmdName);
+    requiresNodeModules = extensionRequiresNodeModules(pkg);
+    manifestExternal = Array.isArray(pkg.external) ? pkg.external.filter((v) => typeof v === "string" && v.trim().length > 0) : [];
+  } catch (e) {
+    console.error(`buildSingleCommand: failed to parse package.json for ${extName}:`, e?.message);
+    return false;
+  }
+  if (!cmd) {
+    console.error(`buildSingleCommand: command "${cmdName}" not found in ${extName} package.json`);
+    return false;
+  }
+  if (!isCommandPlatformCompatible(cmd)) {
+    console.error(`buildSingleCommand: command "${cmdName}" not compatible with current platform`);
+    return false;
+  }
+  const entryFile = resolveEntryFile(extPath, cmd);
+  if (!entryFile) {
+    console.error(`buildSingleCommand: entry file not found for ${extName}/${cmdName}`);
+    return false;
+  }
+  const buildDir = getBuildDir(extPath);
+  fs3.mkdirSync(buildDir, { recursive: true });
+  const outFile = path6.join(buildDir, `${cmdName}.js`);
+  fs3.mkdirSync(path6.dirname(outFile), { recursive: true });
+  const extNodeModules = path6.join(extPath, "node_modules");
+  if (requiresNodeModules && !fs3.existsSync(extNodeModules)) {
+    console.log(`  node_modules missing for ${extName}, installing dependencies\u2026`);
+    try {
+      const { installExtensionDeps: installExtensionDeps2 } = (init_extension_registry(), __toCommonJS(extension_registry_exports));
+      await installExtensionDeps2(extPath);
+    } catch (e) {
+      console.error(`  Failed to install dependencies for ${extName}:`, e?.message);
+      return false;
+    }
+    if (!fs3.existsSync(extNodeModules)) return false;
+  }
+  try {
+    const esbuild = requireEsbuild();
+    console.log(`  On-demand building ${extName}/${cmdName}\u2026`);
+    await runEsbuildBuild(
+      esbuild,
+      {
+        entryPoints: [entryFile],
+        absWorkingDir: extPath,
+        bundle: true,
+        format: "cjs",
+        platform: "node",
+        conditions: ["require", "node"],
+        outfile: outFile,
+        plugins: [
+          legacyCheerioInteropPlugin(),
+          {
+            name: "swift-external",
+            setup(build) {
+              build.onResolve({ filter: /^swift:/ }, (args) => ({
+                path: args.path,
+                external: true
+              }));
+            }
+          }
+        ],
+        external: [
+          "react",
+          "react-dom",
+          "react-dom/*",
+          "react/jsx-runtime",
+          "react/jsx-dev-runtime",
+          "@raycast/api",
+          "@raycast/utils",
+          "re2",
+          "better-sqlite3",
+          "fsevents",
+          "raycast-cross-extension",
+          "node-fetch",
+          "undici",
+          "undici/*",
+          "axios",
+          "tar",
+          "extract-zip",
+          "sha256-file",
+          ...manifestExternal,
+          ...nodeBuiltins
+        ],
+        nodePaths: fs3.existsSync(extNodeModules) ? [extNodeModules] : [],
+        target: "es2020",
+        jsx: "automatic",
+        jsxImportSource: "react",
+        tsconfigRaw: getEsbuildTsconfigRaw(extPath),
+        define: {
+          "process.env.NODE_ENV": '"production"',
+          "global": "globalThis"
+        },
+        logLevel: "warning"
+      },
+      extPath,
+      `${extName}/${cmdName}`
+    );
+    return fs3.existsSync(outFile);
+  } catch (e) {
+    console.error(`  On-demand esbuild failed for ${extName}/${cmdName}:`, e);
+    lastBuildError.set(`${extName}/${cmdName}`, e?.message || String(e));
+    return false;
+  }
+}
+function extractMissingBareImports(error) {
+  const errors = Array.isArray(error?.errors) ? error.errors : [];
+  const found = /* @__PURE__ */ new Set();
+  for (const err of errors) {
+    const text = String(err?.text || "");
+    const match = text.match(/Could not resolve\s+"([^"]+)"/);
+    if (!match) continue;
+    const specifier = match[1];
+    if (!specifier || specifier.startsWith(".") || specifier.startsWith("/") || specifier.includes(":")) {
+      continue;
+    }
+    const parts = specifier.split("/");
+    const pkgName = specifier.startsWith("@") ? parts.slice(0, 2).join("/") : parts[0];
+    if (!pkgName) continue;
+    if (nodeBuiltins.includes(pkgName)) continue;
+    if (pkgName.startsWith("@raycast/")) continue;
+    found.add(pkgName);
+  }
+  return [...found];
+}
+async function runEsbuildBuild(esbuild, options, extPath, label) {
+  try {
+    await esbuild.build(options);
+  } catch (error) {
+    const missing = extractMissingBareImports(error);
+    if (missing.length === 0) throw error;
+    console.log(
+      `  Missing packages for ${label} (${missing.join(", ")}); installing and retrying\u2026`
+    );
+    const { installSpecificPackages: installSpecificPackages2 } = (init_extension_registry(), __toCommonJS(extension_registry_exports));
+    try {
+      await installSpecificPackages2(extPath, missing);
+    } catch (installError) {
+      console.error(
+        `  Failed to install missing packages for ${label}: ${installError?.message || installError}`
+      );
+      throw error;
+    }
+    await esbuild.build(options);
+  }
+}
+async function getExtensionBundle(extName, cmdName) {
+  const normalizedExtName = normalizeExtensionName(extName);
+  const extPath = resolveInstalledExtensionPath(normalizedExtName);
+  if (!extPath) {
+    const searchRoots = getConfiguredExtensionRoots();
+    const msg = `Extension directory not found: ${normalizedExtName}. Searched roots: ${searchRoots.join(", ")}`;
+    console.error(msg);
+    throw new Error(msg);
+  }
+  let outFile = path6.join(extPath, ".sc-build", `${cmdName}.js`);
+  if (!fs3.existsSync(outFile)) {
+    console.log(`Pre-built bundle not found for ${normalizedExtName}/${cmdName}, building on-demand\u2026`);
+    const built = await buildSingleCommand(normalizedExtName, cmdName);
+    if (!built || !fs3.existsSync(outFile)) {
+      try {
+        console.log(`Single-command build failed for ${normalizedExtName}/${cmdName}; trying full extension rebuild\u2026`);
+        await buildAllCommands(normalizedExtName);
+      } catch (rebuildError) {
+        console.warn(`Full rebuild fallback failed for ${normalizedExtName}:`, rebuildError);
+      }
+    }
+    if (!fs3.existsSync(outFile)) {
+      let diagnostic = "";
+      try {
+        const pkgPath = path6.join(extPath, "package.json");
+        const pkg = JSON.parse(fs3.readFileSync(pkgPath, "utf-8"));
+        const commands = Array.isArray(pkg?.commands) ? pkg.commands : [];
+        const cmd = commands.find((c) => c?.name === cmdName);
+        const nodeModulesExists = fs3.existsSync(path6.join(extPath, "node_modules"));
+        const requiresNodeModules = extensionRequiresNodeModules(pkg);
+        if (!cmd) {
+          diagnostic = ` Command "${cmdName}" not found in package.json.`;
+        } else {
+          const entry = resolveEntryFile(extPath, cmd);
+          if (!entry) {
+            diagnostic = ` Entry file not found for "${cmdName}".`;
+          } else if (requiresNodeModules && !nodeModulesExists) {
+            diagnostic = " node_modules is missing (dependency installation likely failed).";
+          }
+        }
+      } catch {
+      }
+      const underlying = lastBuildError.get(`${normalizedExtName}/${cmdName}`);
+      const underlyingSuffix = underlying ? ` Underlying error: ${underlying}` : "";
+      const msg = `On-demand build failed for ${normalizedExtName}/${cmdName}. Extension path: ${extPath}. Expected output: ${outFile}.${diagnostic}${underlyingSuffix}`;
+      console.error(msg);
+      throw new Error(msg);
+    }
+  }
+  const code = fs3.readFileSync(outFile, "utf-8");
+  if (!code) {
+    const msg = `Pre-built bundle is empty: ${outFile}`;
+    console.error(msg);
+    throw new Error(msg);
+  }
+  let title = cmdName;
+  let mode = "view";
+  let owner = "";
+  let extensionDisplayName = extName;
+  let extensionIconDataUrl;
+  let preferences = {};
+  let commandPreferences = {};
+  let preferenceDefinitions = [];
+  let commandArgumentDefinitions = [];
+  try {
+    const pkgPath = path6.join(extPath, "package.json");
+    const pkg = JSON.parse(fs3.readFileSync(pkgPath, "utf-8"));
+    if (!isManifestPlatformCompatible(pkg)) {
+      return null;
+    }
+    const cmd = (pkg.commands || []).find((c) => c.name === cmdName);
+    if (cmd && !isCommandPlatformCompatible(cmd)) {
+      return null;
+    }
+    if (cmd?.title) title = cmd.title;
+    if (cmd?.mode) mode = cmd.mode;
+    if (pkg?.title) extensionDisplayName = pkg.title;
+    extensionIconDataUrl = getExtensionIconDataUrl(extPath, pkg.icon || "icon.png");
+    const rawOwner = pkg.owner || pkg.author || "";
+    owner = typeof rawOwner === "object" ? rawOwner.name || "" : rawOwner;
+    const { extensionPrefs, commandPrefs, definitions } = parsePreferences(pkg, cmdName);
+    preferences = extensionPrefs;
+    commandPreferences = commandPrefs;
+    preferenceDefinitions = definitions;
+    commandArgumentDefinitions = Array.isArray(cmd?.arguments) ? cmd.arguments.filter((arg) => arg && arg.name).map((arg) => ({
+      name: arg.name,
+      required: Boolean(arg.required),
+      type: arg.type,
+      placeholder: arg.placeholder,
+      title: arg.title,
+      data: Array.isArray(arg.data) ? arg.data : void 0
+    })) : [];
+  } catch {
+  }
+  const assetsPath = path6.join(extPath, "assets");
+  const supportPath = path6.join(app.getPath("userData"), "extension-support", normalizedExtName);
+  if (!fs3.existsSync(supportPath)) {
+    fs3.mkdirSync(supportPath, { recursive: true });
+  }
+  return {
+    code,
+    title,
+    mode,
+    extensionName: normalizedExtName,
+    extensionDisplayName,
+    extensionIconDataUrl,
+    commandName: cmdName,
+    assetsPath,
+    supportPath,
+    extensionPath: extPath,
+    owner,
+    preferences: { ...preferences, ...commandPreferences },
+    commandPreferences,
+    preferenceDefinitions,
+    commandArgumentDefinitions
+  };
+}
+var fs3, os, path6, nodeBuiltins, lastBuildError;
+var init_extension_builder = __esm({
+  "src/main/extension-builder.ts"() {
+    "use strict";
+    init_electron_shim();
+    fs3 = __toESM(require("fs"));
+    os = __toESM(require("os"));
+    path6 = __toESM(require("path"));
+    init_extension_platform();
+    init_esbuild_runtime();
+    nodeBuiltins = [
+      "assert",
+      "buffer",
+      "child_process",
+      "cluster",
+      "crypto",
+      "dgram",
+      "dns",
+      "events",
+      "fs",
+      "fs/promises",
+      "http",
+      "http2",
+      "https",
+      "module",
+      "net",
+      "os",
+      "path",
+      "perf_hooks",
+      "process",
+      "querystring",
+      "readline",
+      "stream",
+      "stream/promises",
+      "string_decoder",
+      "timers",
+      "timers/promises",
+      "tls",
+      "tty",
+      "url",
+      "util",
+      "v8",
+      "vm",
+      "worker_threads",
+      "zlib",
+      "async_hooks",
+      "node:assert",
+      "node:buffer",
+      "node:child_process",
+      "node:crypto",
+      "node:events",
+      "node:fs",
+      "node:fs/promises",
+      "node:http",
+      "node:https",
+      "node:module",
+      "node:net",
+      "node:os",
+      "node:path",
+      "node:process",
+      "node:querystring",
+      "node:stream",
+      "node:timers",
+      "node:timers/promises",
+      "node:url",
+      "node:util",
+      "node:vm",
+      "node:worker_threads",
+      "node:zlib",
+      "node:async_hooks"
+    ];
+    lastBuildError = /* @__PURE__ */ new Map();
   }
 });
 
@@ -10661,7 +10758,25 @@ async function runAppleScriptForSession(session2, source) {
   if (session2.effectMode === "record") return "";
   return runAppleScript2(source);
 }
-function nativeColorPickerBinaryPath() {
+function nativeColorPickerBundledBinaryPath() {
+  const envPath = process.env.COLOR_PICKER_HELPER_PATH;
+  if (envPath && (0, import_node_fs12.existsSync)(envPath)) return envPath;
+  const candidates = [
+    (0, import_node_path12.join)(process.cwd(), "native", "color-picker", "color-picker-helper"),
+    (0, import_node_path12.join)(app.getAppPath(), "native", "color-picker", "color-picker-helper")
+  ];
+  if (app?.isPackaged) {
+    const resourcesPath = process.resourcesPath;
+    if (resourcesPath) {
+      candidates.unshift(
+        (0, import_node_path12.join)(resourcesPath, "app.asar.unpacked", "native", "color-picker", "color-picker-helper"),
+        (0, import_node_path12.join)(resourcesPath, "native", "color-picker", "color-picker-helper")
+      );
+    }
+  }
+  return candidates.find((candidate) => (0, import_node_fs12.existsSync)(candidate)) ?? null;
+}
+function nativeColorPickerCachedBinaryPath() {
   return (0, import_node_path12.join)(app.getPath("userData"), "native", "color-picker");
 }
 function nativeColorPickerSourcePath() {
@@ -10674,10 +10789,18 @@ function nativeColorPickerSourcePath() {
   return candidates.find((candidate) => (0, import_node_fs12.existsSync)(candidate)) ?? null;
 }
 async function ensureNativeColorPickerBinary() {
-  const binaryPath = nativeColorPickerBinaryPath();
-  if ((0, import_node_fs12.existsSync)(binaryPath)) return binaryPath;
+  const bundledPath = nativeColorPickerBundledBinaryPath();
+  if (bundledPath) return bundledPath;
   const sourcePath = nativeColorPickerSourcePath();
   if (!sourcePath) return null;
+  const binaryPath = nativeColorPickerCachedBinaryPath();
+  if ((0, import_node_fs12.existsSync)(binaryPath)) {
+    try {
+      if ((0, import_node_fs12.statSync)(binaryPath).mtimeMs >= (0, import_node_fs12.statSync)(sourcePath).mtimeMs) return binaryPath;
+    } catch {
+      return binaryPath;
+    }
+  }
   const moduleCachePath = (0, import_node_path12.join)((0, import_node_path12.dirname)(binaryPath), "swift-module-cache");
   (0, import_node_fs12.mkdirSync)((0, import_node_path12.dirname)(binaryPath), { recursive: true });
   (0, import_node_fs12.mkdirSync)(moduleCachePath, { recursive: true });
@@ -11478,6 +11601,10 @@ function createRaycastApiShim(session2) {
     List,
     Form,
     Grid,
+    Image: {
+      Mask: IMAGE_MASK2
+    },
+    ImageMask: IMAGE_MASK2,
     AI: {
       ask: async (prompt) => askExtensionAI(String(prompt ?? "")),
       Creativity: {
@@ -13457,7 +13584,7 @@ function clearAllExtensionSessions() {
   }
   sessions.clear();
 }
-var import_node_fs12, import_promises2, import_node_child_process8, import_node_crypto5, import_node_http, import_node_os7, import_node_module2, import_node_path12, import_node_stream, import_web, import_node_util7, import_node_v8, import_node_zlib, import_node_vm, RUNTIME_COMPONENT_LIMIT, RUNTIME_RECURSION_LIMIT, SESSIONS_SOFT_LIMIT, INITIAL_RENDER_PASSES, SEARCH_TEXT_RENDER_PASSES, LIST_ITEM_PAGE_SIZE, APPLICATIONS_CACHE_TTL_MS, PROMISE_RESULT_CACHE_TTL_MS, PROMISE_RESULT_MEMORY_CACHE_LIMIT, BUILTIN_SET, JSX_FRAGMENT, REACT_CONTEXT, execFileAsync7, gzipAsync, sessions, promiseResultMemoryCache, applicationsCache, iconProxy;
+var import_node_fs12, import_promises2, import_node_child_process8, import_node_crypto5, import_node_http, import_node_os7, import_node_module2, import_node_path12, import_node_stream, import_web, import_node_util7, import_node_v8, import_node_zlib, import_node_vm, RUNTIME_COMPONENT_LIMIT, RUNTIME_RECURSION_LIMIT, SESSIONS_SOFT_LIMIT, INITIAL_RENDER_PASSES, SEARCH_TEXT_RENDER_PASSES, LIST_ITEM_PAGE_SIZE, APPLICATIONS_CACHE_TTL_MS, PROMISE_RESULT_CACHE_TTL_MS, PROMISE_RESULT_MEMORY_CACHE_LIMIT, BUILTIN_SET, JSX_FRAGMENT, REACT_CONTEXT, execFileAsync7, gzipAsync, IMAGE_MASK2, sessions, promiseResultMemoryCache, applicationsCache, iconProxy;
 var init_extension_runner = __esm({
   "src/main/extension-runner.ts"() {
     "use strict";
@@ -13494,6 +13621,10 @@ var init_extension_runner = __esm({
     REACT_CONTEXT = /* @__PURE__ */ Symbol.for("react.context");
     execFileAsync7 = (0, import_node_util7.promisify)(import_node_child_process8.execFile);
     gzipAsync = (0, import_node_util7.promisify)(import_node_zlib.gzip);
+    IMAGE_MASK2 = {
+      Circle: "circle",
+      RoundedRectangle: "roundedRectangle"
+    };
     sessions = /* @__PURE__ */ new Map();
     promiseResultMemoryCache = /* @__PURE__ */ new Map();
     applicationsCache = null;
@@ -14510,6 +14641,7 @@ var IPC_CHANNELS = {
   PATH_COMPLETE: "path:complete",
   DIRECTORY_VISIT_RECORD: "directory-visit:record",
   SEARCH_EXECUTE: "search:execute",
+  SEARCH_RECORD_USAGE: "search:record-usage",
   SEARCH_BENCHMARK_RUN: "search:benchmark:run",
   SEARCH_BENCHMARK_HISTORY: "search:benchmark:history",
   AI_ACTION: "ai:action",
@@ -14904,6 +15036,7 @@ function setLauncherContentHeight(win, rawHeight, rawZoomFactor = 1) {
 
 // src/main/ipc.ts
 init_configStore();
+init_extension_builder();
 init_githubCopilotAuth();
 
 // src/main/llm/listModels.ts
@@ -15211,8 +15344,8 @@ async function classifyIntent(raw) {
 init_electron_shim();
 var import_node_crypto4 = require("node:crypto");
 var import_node_module = require("node:module");
-var import_node_path10 = require("node:path");
-var import_node_fs10 = require("node:fs");
+var import_node_path11 = require("node:path");
+var import_node_fs11 = require("node:fs");
 var import_node_os6 = require("node:os");
 
 // node_modules/.pnpm/fuse.js@7.3.0/node_modules/fuse.js/dist/fuse.mjs
@@ -17146,16 +17279,20 @@ Fuse.use = function(...plugins) {
 // src/main/extensions/raycastShim.ts
 init_electron_shim();
 var import_node_child_process7 = require("node:child_process");
-var import_node_fs9 = require("node:fs");
+var import_node_fs10 = require("node:fs");
 var import_node_os5 = require("node:os");
-var import_node_path9 = require("node:path");
+var import_node_path10 = require("node:path");
 var import_node_util6 = require("node:util");
 var TOAST_STYLE = {
   Success: "success",
   Failure: "failure",
   Animated: "animated"
 };
-var execFileAsync5 = (0, import_node_util6.promisify)(import_node_child_process7.execFile);
+var IMAGE_MASK = {
+  Circle: "circle",
+  RoundedRectangle: "roundedRectangle"
+};
+var execFileAsync6 = (0, import_node_util6.promisify)(import_node_child_process7.execFile);
 async function runAppleScript(source) {
   if (process.platform !== "darwin") {
     throw new Error("AppleScript is only available on macOS");
@@ -17163,7 +17300,7 @@ async function runAppleScript(source) {
   if (typeof source !== "string" || source.trim().length === 0) {
     return "";
   }
-  const { stdout } = await execFileAsync5("/usr/bin/osascript", ["-e", source], {
+  const { stdout } = await execFileAsync6("/usr/bin/osascript", ["-e", source], {
     encoding: "utf8",
     maxBuffer: 10 * 1024 * 1024
   });
@@ -17175,11 +17312,12 @@ function createRenderProxy(name) {
   };
   Object.defineProperty(target, "name", { value: name });
   return new Proxy(target, {
-    get(_t, prop) {
+    get(t, prop) {
       if (prop === Symbol.toPrimitive) return () => `[Raycast:${name}]`;
       if (prop === "displayName") return name;
       if (prop === "prototype") return {};
       if (typeof prop === "symbol") return void 0;
+      if (prop in t) return Reflect.get(t, prop);
       return createRenderProxy(`${name}.${String(prop)}`);
     },
     apply() {
@@ -17191,10 +17329,10 @@ function createRenderProxy(name) {
   });
 }
 function createLocalStorage(packageRoot) {
-  const file = (0, import_node_path9.join)(packageRoot, "localStorage.json");
+  const file = (0, import_node_path10.join)(packageRoot, "localStorage.json");
   const readAll2 = () => {
     try {
-      const raw = (0, import_node_fs9.readFileSync)(file, "utf8");
+      const raw = (0, import_node_fs10.readFileSync)(file, "utf8");
       const parsed = JSON.parse(raw);
       return parsed && typeof parsed === "object" ? parsed : {};
     } catch {
@@ -17202,8 +17340,8 @@ function createLocalStorage(packageRoot) {
     }
   };
   const writeAll2 = (value) => {
-    (0, import_node_fs9.mkdirSync)(packageRoot, { recursive: true });
-    (0, import_node_fs9.writeFileSync)(file, JSON.stringify(value, null, 2), "utf8");
+    (0, import_node_fs10.mkdirSync)(packageRoot, { recursive: true });
+    (0, import_node_fs10.writeFileSync)(file, JSON.stringify(value, null, 2), "utf8");
   };
   return {
     getItem: async (key) => readAll2()[key],
@@ -17224,9 +17362,9 @@ function createLocalStorage(packageRoot) {
   };
 }
 function readPreferences(packageRoot) {
-  const file = (0, import_node_path9.join)(packageRoot, "preferences.json");
+  const file = (0, import_node_path10.join)(packageRoot, "preferences.json");
   try {
-    const raw = (0, import_node_fs9.readFileSync)(file, "utf8");
+    const raw = (0, import_node_fs10.readFileSync)(file, "utf8");
     const parsed = JSON.parse(raw);
     return parsed && typeof parsed === "object" ? parsed : {};
   } catch {
@@ -17261,9 +17399,9 @@ function createClipboardShim() {
   };
 }
 function createEnvironment(ctx) {
-  const supportPath = (0, import_node_path9.join)(ctx.packageRoot, "support");
+  const supportPath = (0, import_node_path10.join)(ctx.packageRoot, "support");
   try {
-    (0, import_node_fs9.mkdirSync)(supportPath, { recursive: true });
+    (0, import_node_fs10.mkdirSync)(supportPath, { recursive: true });
   } catch {
   }
   return {
@@ -17274,17 +17412,21 @@ function createEnvironment(ctx) {
     raycastVersion: "1.77.0",
     isDevelopment: !app.isPackaged,
     supportPath,
-    assetsPath: (0, import_node_path9.join)(ctx.packageRoot, "assets"),
+    assetsPath: (0, import_node_path10.join)(ctx.packageRoot, "assets"),
     launchType: "userInitiated",
     textSize: "medium"
   };
 }
 function createRaycastApi(ctx) {
+  const Image = Object.assign(createRenderProxy("Image"), {
+    Mask: IMAGE_MASK
+  });
   return {
     Toast: { Style: TOAST_STYLE },
     Icon: createRenderProxy("Icon"),
     Color: createRenderProxy("Color"),
-    Image: createRenderProxy("Image"),
+    Image,
+    ImageMask: IMAGE_MASK,
     List: createRenderProxy("List"),
     Form: createRenderProxy("Form"),
     Detail: createRenderProxy("Detail"),
@@ -17501,46 +17643,46 @@ var RUNTIME_UNSUPPORTED_MODE = "RUNTIME_UNSUPPORTED_MODE";
 var DEFAULT_DB = {
   installed: []
 };
-var catalogCache = null;
+var catalogCache2 = null;
 var commandCache = /* @__PURE__ */ new Map();
 function getDbPath() {
-  const dir = (0, import_node_path10.join)(app.getPath("userData"), "extensions");
-  (0, import_node_fs10.mkdirSync)(dir, { recursive: true });
-  return (0, import_node_path10.join)(dir, "installed.json");
+  const dir = (0, import_node_path11.join)(app.getPath("userData"), "extensions");
+  (0, import_node_fs11.mkdirSync)(dir, { recursive: true });
+  return (0, import_node_path11.join)(dir, "installed.json");
 }
 function extensionsRootDir() {
-  const dir = (0, import_node_path10.join)(app.getPath("userData"), "extensions");
-  (0, import_node_fs10.mkdirSync)(dir, { recursive: true });
+  const dir = (0, import_node_path11.join)(app.getPath("userData"), "extensions");
+  (0, import_node_fs11.mkdirSync)(dir, { recursive: true });
   return dir;
 }
 function installedPackageRoot(extensionId) {
-  return (0, import_node_path10.join)(extensionsRootDir(), "packages", extensionId);
+  return (0, import_node_path11.join)(extensionsRootDir(), "packages", extensionId);
 }
 function packageJsonPathForInstalledExtension(extensionId) {
-  return (0, import_node_path10.join)(installedPackageRoot(extensionId), "package.json");
+  return (0, import_node_path11.join)(installedPackageRoot(extensionId), "package.json");
 }
 function scriptPathForInstalledExtensionCommand(extensionId, commandName2) {
-  return (0, import_node_path10.join)(installedPackageRoot(extensionId), ".sc-build", `${commandName2}.js`);
+  return (0, import_node_path11.join)(installedPackageRoot(extensionId), ".sc-build", `${commandName2}.js`);
 }
 function metaPathForInstalledExtension(extensionId) {
-  return (0, import_node_path10.join)(installedPackageRoot(extensionId), "meta.json");
+  return (0, import_node_path11.join)(installedPackageRoot(extensionId), "meta.json");
 }
 function backupPackageRoot(extensionId) {
-  return (0, import_node_path10.join)(extensionsRootDir(), "packages", `${extensionId}.backup`);
+  return (0, import_node_path11.join)(extensionsRootDir(), "packages", `${extensionId}.backup`);
 }
 function readInstallMeta(extensionId) {
   const p = metaPathForInstalledExtension(extensionId);
-  if (!(0, import_node_fs10.existsSync)(p)) return null;
+  if (!(0, import_node_fs11.existsSync)(p)) return null;
   try {
-    return JSON.parse((0, import_node_fs10.readFileSync)(p, "utf8"));
+    return JSON.parse((0, import_node_fs11.readFileSync)(p, "utf8"));
   } catch {
     return null;
   }
 }
 function writeInstallMeta(meta) {
   const p = metaPathForInstalledExtension(meta.extensionId);
-  (0, import_node_fs10.mkdirSync)((0, import_node_path10.dirname)(p), { recursive: true });
-  (0, import_node_fs10.writeFileSync)(p, JSON.stringify(meta, null, 2), "utf8");
+  (0, import_node_fs11.mkdirSync)((0, import_node_path11.dirname)(p), { recursive: true });
+  (0, import_node_fs11.writeFileSync)(p, JSON.stringify(meta, null, 2), "utf8");
 }
 function hashText(text) {
   return (0, import_node_crypto4.createHash)("sha256").update(text).digest("hex");
@@ -17561,14 +17703,14 @@ function inspectIntegrity(extensionId) {
   for (const name of meta.commandNames) {
     if (meta.missingScripts.includes(name)) continue;
     const scriptPath = scriptPathForInstalledExtensionCommand(extensionId, name);
-    if (!(0, import_node_fs10.existsSync)(scriptPath)) {
+    if (!(0, import_node_fs11.existsSync)(scriptPath)) {
       missing.push(name);
       continue;
     }
     const expected = meta.scriptHashes[name];
     if (!expected) continue;
     try {
-      const actual = hashText((0, import_node_fs10.readFileSync)(scriptPath, "utf8"));
+      const actual = hashText((0, import_node_fs11.readFileSync)(scriptPath, "utf8"));
       if (actual !== expected) tampered.push(name);
     } catch {
       missing.push(name);
@@ -17593,9 +17735,9 @@ function parseJsonSafe(raw) {
 }
 function readInstalledPackageJson(extensionId) {
   const p = packageJsonPathForInstalledExtension(extensionId);
-  if (!(0, import_node_fs10.existsSync)(p)) return null;
+  if (!(0, import_node_fs11.existsSync)(p)) return null;
   try {
-    const raw = (0, import_node_fs10.readFileSync)(p, "utf8");
+    const raw = (0, import_node_fs11.readFileSync)(p, "utf8");
     return parseJsonSafe(raw);
   } catch {
     return null;
@@ -17607,7 +17749,7 @@ function extensionSlugFromId(extensionId) {
 function readDb2() {
   const p = getDbPath();
   try {
-    const raw = (0, import_node_fs10.readFileSync)(p, "utf8");
+    const raw = (0, import_node_fs11.readFileSync)(p, "utf8");
     const parsed = JSON.parse(raw);
     return {
       installed: Array.isArray(parsed.installed) ? parsed.installed : []
@@ -17618,7 +17760,7 @@ function readDb2() {
 }
 function writeDb2(db) {
   const p = getDbPath();
-  (0, import_node_fs10.writeFileSync)(p, JSON.stringify(db, null, 2), "utf8");
+  (0, import_node_fs11.writeFileSync)(p, JSON.stringify(db, null, 2), "utf8");
 }
 function byName(a, b) {
   return a.name.localeCompare(b.name);
@@ -17707,10 +17849,10 @@ async function fetchRaycastCatalogFromGithub() {
 }
 async function stageAndInstallExtension(extensionId, slug) {
   const pkg = await fetchRaycastPackage(slug);
-  const staging = (0, import_node_fs10.mkdtempSync)((0, import_node_path10.join)((0, import_node_os6.tmpdir)(), `tezbar-ext-${extensionId}-`));
-  const stagingBuild = (0, import_node_path10.join)(staging, ".sc-build");
-  (0, import_node_fs10.mkdirSync)(stagingBuild, { recursive: true });
-  (0, import_node_fs10.writeFileSync)((0, import_node_path10.join)(staging, "package.json"), JSON.stringify(pkg, null, 2), "utf8");
+  const staging = (0, import_node_fs11.mkdtempSync)((0, import_node_path11.join)((0, import_node_os6.tmpdir)(), `tezbar-ext-${extensionId}-`));
+  const stagingBuild = (0, import_node_path11.join)(staging, ".sc-build");
+  (0, import_node_fs11.mkdirSync)(stagingBuild, { recursive: true });
+  (0, import_node_fs11.writeFileSync)((0, import_node_path11.join)(staging, "package.json"), JSON.stringify(pkg, null, 2), "utf8");
   const commandEntries = (pkg.commands ?? []).map((cmd) => ({
     name: typeof cmd.name === "string" ? cmd.name.trim() : "",
     mode: typeof cmd.mode === "string" ? cmd.mode.trim() : ""
@@ -17722,7 +17864,7 @@ async function stageAndInstallExtension(extensionId, slug) {
       const url = `https://raw.githubusercontent.com/raycast/extensions/${RAYCAST_EXTENSIONS_REF}/${RAYCAST_EXTENSIONS_PATH}/${slug}/.sc-build/${entry.name}.js`;
       try {
         const js = await fetchText(url);
-        (0, import_node_fs10.writeFileSync)((0, import_node_path10.join)(stagingBuild, `${entry.name}.js`), js, "utf8");
+        (0, import_node_fs11.writeFileSync)((0, import_node_path11.join)(stagingBuild, `${entry.name}.js`), js, "utf8");
         scriptHashes[entry.name] = hashText(js);
       } catch {
         missingScripts.push(entry.name);
@@ -17731,22 +17873,22 @@ async function stageAndInstallExtension(extensionId, slug) {
   );
   const root = installedPackageRoot(extensionId);
   const backup = backupPackageRoot(extensionId);
-  if ((0, import_node_fs10.existsSync)(backup)) (0, import_node_fs10.rmSync)(backup, { recursive: true, force: true });
+  if ((0, import_node_fs11.existsSync)(backup)) (0, import_node_fs11.rmSync)(backup, { recursive: true, force: true });
   try {
-    if ((0, import_node_fs10.existsSync)(root)) (0, import_node_fs10.renameSync)(root, backup);
-    (0, import_node_fs10.mkdirSync)((0, import_node_path10.dirname)(root), { recursive: true });
-    (0, import_node_fs10.renameSync)(staging, root);
+    if ((0, import_node_fs11.existsSync)(root)) (0, import_node_fs11.renameSync)(root, backup);
+    (0, import_node_fs11.mkdirSync)((0, import_node_path11.dirname)(root), { recursive: true });
+    (0, import_node_fs11.renameSync)(staging, root);
   } catch (error) {
-    if ((0, import_node_fs10.existsSync)(backup) && !(0, import_node_fs10.existsSync)(root)) {
+    if ((0, import_node_fs11.existsSync)(backup) && !(0, import_node_fs11.existsSync)(root)) {
       try {
-        (0, import_node_fs10.renameSync)(backup, root);
+        (0, import_node_fs11.renameSync)(backup, root);
       } catch {
       }
     }
-    (0, import_node_fs10.rmSync)(staging, { recursive: true, force: true });
+    (0, import_node_fs11.rmSync)(staging, { recursive: true, force: true });
     throw error;
   } finally {
-    if ((0, import_node_fs10.existsSync)(backup)) (0, import_node_fs10.rmSync)(backup, { recursive: true, force: true });
+    if ((0, import_node_fs11.existsSync)(backup)) (0, import_node_fs11.rmSync)(backup, { recursive: true, force: true });
   }
   writeInstallMeta({
     extensionId,
@@ -17831,9 +17973,9 @@ async function executeNoViewScript(extensionId, commandName2, scriptPath, argume
     "module",
     "__filename",
     "__dirname",
-    (0, import_node_fs10.readFileSync)(scriptPath, "utf8")
+    (0, import_node_fs11.readFileSync)(scriptPath, "utf8")
   );
-  wrapper(mod.exports, customRequire, mod, scriptPath, (0, import_node_path10.dirname)(scriptPath));
+  wrapper(mod.exports, customRequire, mod, scriptPath, (0, import_node_path11.dirname)(scriptPath));
   const exported = mod.exports;
   const command = typeof exported.default === "function" ? exported.default : typeof mod.exports === "function" ? mod.exports : null;
   if (!command) {
@@ -17880,32 +18022,32 @@ async function executeExtensionCommandRuntime(extensionId, commandName2, argumen
     );
   }
   const scriptPath = scriptPathForInstalledExtensionCommand(extensionId, commandName2);
-  if (!(0, import_node_fs10.existsSync)(scriptPath)) {
+  if (!(0, import_node_fs11.existsSync)(scriptPath)) {
     throw new Error(`Missing command script: ${commandName2}.js`);
   }
   return await executeNoViewScript(extensionId, commandName2, scriptPath, argumentValues);
 }
 async function getStoreCatalog() {
   const now = Date.now();
-  if (catalogCache && now - catalogCache.fetchedAt < CATALOG_CACHE_TTL_MS) {
-    return catalogCache.catalog;
+  if (catalogCache2 && now - catalogCache2.fetchedAt < CATALOG_CACHE_TTL_MS) {
+    return catalogCache2.catalog;
   }
   try {
     const catalog = await fetchRaycastCatalogFromAwesome();
-    catalogCache = { fetchedAt: now, catalog };
+    catalogCache2 = { fetchedAt: now, catalog };
     return catalog;
   } catch (error) {
     console.warn("[extensions] failed to refresh Raycast catalog from Awesome:", error);
     try {
       const catalog = await fetchRaycastCatalogFromGithub();
       if (catalog.length > 0) {
-        catalogCache = { fetchedAt: now, catalog };
+        catalogCache2 = { fetchedAt: now, catalog };
         return catalog;
       }
     } catch (innerError) {
       console.warn("[extensions] failed to refresh Raycast catalog from Github:", innerError);
     }
-    return catalogCache?.catalog ?? [];
+    return catalogCache2?.catalog ?? [];
   }
 }
 function scoreMatch(item, q) {
@@ -17960,7 +18102,7 @@ async function searchStoreExtensions(query) {
   }).filter((entry) => entry.score > 0).sort((a, b) => b.score - a.score || byName(a.item, b.item));
   return finalResults.map((entry) => entry.item);
 }
-async function installExtension(extensionId) {
+async function installExtension2(extensionId) {
   const catalog = await getStoreCatalog();
   const manifest = catalog.find((item) => item.id === extensionId);
   if (!manifest) {
@@ -17981,7 +18123,7 @@ async function installExtension(extensionId) {
   void ensureExtensionBundle(extensionId);
   return next;
 }
-function uninstallExtension(extensionId) {
+function uninstallExtension2(extensionId) {
   const db = readDb2();
   const before = db.installed.length;
   db.installed = db.installed.filter((item) => item.id !== extensionId);
@@ -17989,8 +18131,8 @@ function uninstallExtension(extensionId) {
   writeDb2(db);
   commandCache.delete(extensionId);
   installErrors.delete(extensionId);
-  (0, import_node_fs10.rmSync)(installedPackageRoot(extensionId), { recursive: true, force: true });
-  (0, import_node_fs10.rmSync)(backupPackageRoot(extensionId), { recursive: true, force: true });
+  (0, import_node_fs11.rmSync)(installedPackageRoot(extensionId), { recursive: true, force: true });
+  (0, import_node_fs11.rmSync)(backupPackageRoot(extensionId), { recursive: true, force: true });
   return true;
 }
 
@@ -18987,6 +19129,9 @@ function lexicalScore(text, query) {
   }
   return matched / tokens.length / 1.5;
 }
+function searchableTokens(text) {
+  return text.toLowerCase().match(/[a-z0-9]+/g) ?? [];
+}
 function levenshteinDistance(left, right) {
   if (left === right) return 0;
   if (!left) return right.length;
@@ -19007,6 +19152,34 @@ function levenshteinDistance(left, right) {
   }
   return prev[b.length];
 }
+function tokenSimilarity(candidate, query) {
+  if (!candidate || !query) return 0;
+  if (candidate === query) return 1;
+  if (candidate.startsWith(query)) return 0.92;
+  if (query.startsWith(candidate) && candidate.length >= 3) return 0.82;
+  if (candidate.includes(query) || query.includes(candidate)) return 0.74;
+  const distance = levenshteinDistance(candidate, query);
+  const length = Math.max(candidate.length, query.length);
+  const maxDistance = Math.max(1, Math.floor(length * 0.38));
+  if (distance > maxDistance) return 0;
+  return Math.max(0, 1 - distance / length);
+}
+function fuzzySimilarityScore(text, query) {
+  const queryTokens = searchableTokens(query);
+  if (queryTokens.length === 0) return 0;
+  const candidateTokens = searchableTokens(text);
+  if (candidateTokens.length === 0) return 0;
+  let total = 0;
+  for (const queryToken of queryTokens) {
+    let best = 0;
+    for (const candidateToken of candidateTokens) {
+      best = Math.max(best, tokenSimilarity(candidateToken, queryToken));
+    }
+    total += best;
+  }
+  const average = total / queryTokens.length;
+  return average >= 0.45 ? average : 0;
+}
 function buildFtsQuery(query) {
   const tokens = query.toLowerCase().match(/[a-z0-9]+/g) ?? [];
   if (tokens.length === 0) return "";
@@ -19014,6 +19187,9 @@ function buildFtsQuery(query) {
 }
 
 // src/main/search/indexDb.ts
+function normalizeStoredQuery(query) {
+  return query.trim().toLowerCase().replace(/\s+/g, " ");
+}
 function dbPath2() {
   const dir = (0, import_node_path14.join)(app.getPath("userData"), "search");
   (0, import_node_fs14.mkdirSync)(dir, { recursive: true });
@@ -19091,6 +19267,16 @@ var SearchIndexDatabase = class {
         success_count INTEGER NOT NULL DEFAULT 0,
         total_count INTEGER NOT NULL DEFAULT 0,
         last_used_at INTEGER NOT NULL DEFAULT 0
+      );
+
+      CREATE TABLE IF NOT EXISTS query_action_stats (
+        query TEXT NOT NULL,
+        action_id TEXT NOT NULL,
+        frequency INTEGER NOT NULL DEFAULT 0,
+        success_count INTEGER NOT NULL DEFAULT 0,
+        total_count INTEGER NOT NULL DEFAULT 0,
+        last_used_at INTEGER NOT NULL DEFAULT 0,
+        PRIMARY KEY (query, action_id)
       );
 
       CREATE TABLE IF NOT EXISTS benchmark_snapshots (
@@ -19246,7 +19432,12 @@ var SearchIndexDatabase = class {
     ).all(ftsQuery, candidateLimit) : [];
     const mapped = rows.map((row) => {
       const inverseBm25 = Number.isFinite(row.bm25Score) ? 1 / (1 + Math.max(row.bm25Score, 0)) : 0.5;
-      const lexical = Math.max(inverseBm25, lexicalScore(`${row.title} ${row.subtitle}`, trimmed));
+      const searchableText = `${row.title} ${row.subtitle}`;
+      const lexical = Math.max(
+        inverseBm25,
+        lexicalScore(searchableText, trimmed),
+        fuzzySimilarityScore(searchableText, trimmed)
+      );
       return {
         id: row.id,
         category: row.category,
@@ -19258,27 +19449,35 @@ var SearchIndexDatabase = class {
         popularity: row.popularity
       };
     });
-    if (mapped.length >= candidateLimit) {
-      return mapped.slice(0, candidateLimit);
+    const fuzzyRows = this.fuzzySearch(trimmed, candidateLimit);
+    const byId = /* @__PURE__ */ new Map();
+    for (const row of [...mapped, ...fuzzyRows]) {
+      const existing = byId.get(row.id);
+      if (!existing || row.lexical > existing.lexical) {
+        byId.set(row.id, row);
+      }
     }
-    return [...mapped, ...this.fuzzySearch(trimmed, candidateLimit - mapped.length)];
+    return Array.from(byId.values()).sort((a, b) => b.lexical - a.lexical).slice(0, candidateLimit);
   }
   fuzzySearch(query, limit) {
     if (limit <= 0) return [];
     const rows = this.db.prepare(
       `
-          SELECT id, category, title, subtitle, action_json AS actionJson, updated_at AS updatedAt, popularity
+          SELECT id, category, title, subtitle, tokens, action_json AS actionJson, updated_at AS updatedAt, popularity
           FROM documents
           ORDER BY updated_at DESC
           LIMIT ?
         `
-    ).all(Math.max(300, limit * 30));
+    ).all(Math.max(1e3, limit * 50));
     const scored = [];
     for (const row of rows) {
-      const candidate = row.title.toLowerCase();
-      const distance = levenshteinDistance(candidate, query.toLowerCase());
-      if (distance > 3 && !candidate.includes(query.toLowerCase())) continue;
-      const lexical = lexicalScore(`${row.title} ${row.subtitle}`, query);
+      const searchableText = `${row.title} ${row.subtitle} ${row.tokens}`;
+      const lexical = Math.max(
+        lexicalScore(searchableText, query),
+        fuzzySimilarityScore(searchableText, query)
+      );
+      if (lexical <= 0) continue;
+      const distance = levenshteinDistance(row.title.toLowerCase(), query.toLowerCase());
       scored.push({
         id: row.id,
         category: row.category,
@@ -19292,10 +19491,13 @@ var SearchIndexDatabase = class {
       });
     }
     scored.sort((a, b) => {
+      if (a.lexical !== b.lexical) {
+        return b.lexical - a.lexical;
+      }
       if (a.fuzzyDistance !== void 0 && b.fuzzyDistance !== void 0 && a.fuzzyDistance !== b.fuzzyDistance) {
         return a.fuzzyDistance - b.fuzzyDistance;
       }
-      return b.lexical - a.lexical;
+      return b.updatedAt - a.updatedAt;
     });
     return scored.slice(0, limit);
   }
@@ -19317,6 +19519,38 @@ var SearchIndexDatabase = class {
         `
     ).all(...actionIds);
     return new Map(rows.map((row) => [row.actionId, row]));
+  }
+  getQueryActionStats(query, actionIds) {
+    const normalizedQuery = normalizeStoredQuery(query);
+    if (!normalizedQuery || actionIds.length === 0) return /* @__PURE__ */ new Map();
+    const placeholders = actionIds.map(() => "?").join(",");
+    const rows = this.db.prepare(
+      `
+          SELECT query AS query,
+                 action_id AS actionId,
+                 frequency AS frequency,
+                 success_count AS successCount,
+                 total_count AS totalCount,
+                 last_used_at AS lastUsedAt
+          FROM query_action_stats
+          WHERE query = ? AND action_id IN (${placeholders})
+        `
+    ).all(normalizedQuery, ...actionIds);
+    return new Map(rows.map((row) => [row.actionId, row]));
+  }
+  listQueryActionIds(query, limit) {
+    const normalizedQuery = normalizeStoredQuery(query);
+    if (!normalizedQuery || limit <= 0) return [];
+    const rows = this.db.prepare(
+      `
+          SELECT action_id AS actionId
+          FROM query_action_stats
+          WHERE query = ? AND success_count > 0
+          ORDER BY last_used_at DESC, frequency DESC
+          LIMIT ?
+        `
+    ).all(normalizedQuery, limit);
+    return rows.map((row) => row.actionId);
   }
   getDocumentsByIds(ids) {
     if (ids.length === 0) return [];
@@ -19384,6 +19618,22 @@ var SearchIndexDatabase = class {
             last_used_at = excluded.last_used_at
         `
     ).run(actionId, success ? 1 : 0, now);
+  }
+  recordActionForQuery(query, actionId, success) {
+    const normalizedQuery = normalizeStoredQuery(query);
+    if (!normalizedQuery) return;
+    const now = Date.now();
+    this.db.prepare(
+      `
+          INSERT INTO query_action_stats (query, action_id, frequency, success_count, total_count, last_used_at)
+          VALUES (?, ?, 1, ?, 1, ?)
+          ON CONFLICT(query, action_id) DO UPDATE SET
+            frequency = query_action_stats.frequency + 1,
+            success_count = query_action_stats.success_count + excluded.success_count,
+            total_count = query_action_stats.total_count + 1,
+            last_used_at = excluded.last_used_at
+        `
+    ).run(normalizedQuery, actionId, success ? 1 : 0, now);
   }
   recordClick(query, resultId, rank, success) {
     this.db.prepare(
@@ -19966,10 +20216,17 @@ function buildRaymesSurfaceDocuments() {
       commandId: "open-settings"
     },
     {
-      id: "command:open-extensions",
-      title: "Open Extensions",
-      subtitle: "Tezbar extensions",
+      id: "command:open-extensions-settings",
+      title: "Extensions",
+      subtitle: "Settings \xB7 Extensions tab",
       keywords: ["extensions", "raycast", "/extensions"],
+      commandId: "open-extensions-settings"
+    },
+    {
+      id: "command:open-extensions",
+      title: "Extensions Store",
+      subtitle: "Browse and install extensions",
+      keywords: ["store", "extension store", "extensions store", "raycast store", "/store"],
       commandId: "open-extensions"
     },
     {
@@ -20012,20 +20269,28 @@ var commandsProvider = {
 
 // src/main/search/providers/extensionsProvider.ts
 init_extension_registry();
+init_configStore();
 var extensionsProvider = {
   providerId: "extensions",
   async buildDocuments() {
     const installed = listInstalledRegistryExtensions();
     if (installed.length === 0) return [];
+    const disabled = getDisabledCommands();
+    const aliases = getCommandAliases();
     const out = [];
     for (const ext of installed.slice(0, 100)) {
       for (const cmd of ext.commands) {
+        const commandId = `extcmd:${ext.id}:${cmd.name}`;
+        if (disabled[commandId]) continue;
+        let tokens = `${cmd.title} ${cmd.name} ${ext.name} ${ext.slug} ${ext.id} ${ext.description || ""}`;
+        const alias = aliases[commandId];
+        if (alias) tokens += ` ${alias}`;
         out.push({
-          id: `extcmd:${ext.id}:${cmd.name}`,
+          id: commandId,
           category: "extensions",
           title: cmd.title,
           subtitle: ext.name,
-          tokens: `${cmd.title} ${cmd.name} ${ext.name} ${ext.slug} ${ext.id} ${ext.description || ""}`,
+          tokens,
           action: {
             type: "run-extension-command",
             extensionId: ext.id,
@@ -20827,6 +21092,31 @@ function fuzzyBonus(distance) {
   if (distance === 2) return 0.02;
   return 0;
 }
+function isLearnedUsageCategory(category) {
+  return category === "applications" || category === "extensions" || category === "native-command" || category === "commands" || category === "quick-notes" || category === "snippets" || category === "quick-links";
+}
+function computeLearnedUsageBoost(input) {
+  if (!isLearnedUsageCategory(input.category) || input.frequency <= 0 || input.lastUsedAt <= 0) {
+    return 0;
+  }
+  const now = input.now ?? Date.now();
+  const ageMs = Math.max(0, now - input.lastUsedAt);
+  const oneDay = 24 * 60 * 60 * 1e3;
+  const recencyBoost = ageMs < oneDay ? 360 : ageMs < 7 * oneDay ? 220 : ageMs < 30 * oneDay ? 100 : 0;
+  const frequencyBoost = Math.min(900, Math.log2(input.frequency + 1) * 220);
+  const successBoost = input.successRate >= 0.5 ? 120 : 0;
+  return Math.round(recencyBoost + frequencyBoost + successBoost);
+}
+function computeQueryLearningBoost(input) {
+  if (input.frequency <= 0 || input.lastUsedAt <= 0) return 0;
+  const now = input.now ?? Date.now();
+  const ageMs = Math.max(0, now - input.lastUsedAt);
+  const oneDay = 24 * 60 * 60 * 1e3;
+  const recencyBoost = ageMs < oneDay ? 1250 : ageMs < 7 * oneDay ? 900 : ageMs < 30 * oneDay ? 550 : 250;
+  const frequencyBoost = Math.min(1200, Math.log2(input.frequency + 1) * 350);
+  const successBoost = input.successRate >= 0.5 ? 150 : 0;
+  return Math.round(recencyBoost + frequencyBoost + successBoost);
+}
 function computeWeightedScore(input) {
   const lexical = Math.max(0, Math.min(1, input.lexical));
   const recency = normalizeRecency(input.recencyMs);
@@ -20985,6 +21275,16 @@ function isPresent(value) {
   return value !== null && value !== void 0;
 }
 function uniqById(items) {
+  const seen = /* @__PURE__ */ new Set();
+  const out = [];
+  for (const item of items) {
+    if (seen.has(item.id)) continue;
+    seen.add(item.id);
+    out.push(item);
+  }
+  return out;
+}
+function uniqRowsById(items) {
   const seen = /* @__PURE__ */ new Set();
   const out = [];
   for (const item of items) {
@@ -21161,6 +21461,12 @@ function internalSurfaceBoost(category, title, query, subtitle) {
   const normalizedTitle = title.toLowerCase();
   const normalizedQuery = query.trim().toLowerCase();
   if (!normalizedQuery) return 0;
+  if (category === "commands" && normalizedTitle === "extensions" && normalizedQuery === "extensions") {
+    return 1400;
+  }
+  if (category === "commands" && normalizedTitle === "extensions store" && ["store", "extension store", "extensions store"].includes(normalizedQuery)) {
+    return 1400;
+  }
   let boost = 0;
   if (normalizedTitle === normalizedQuery) {
     boost = 600;
@@ -21211,12 +21517,16 @@ function exactRecentQuickNoteBoost(category, title, query, updatedAt, now) {
 function rankRows(query, docs) {
   const now = Date.now();
   const stats = indexDb?.getActionStats(docs.map((entry) => entry.doc.id)) ?? /* @__PURE__ */ new Map();
+  const queryStats = indexDb?.getQueryActionStats(query, docs.map((entry) => entry.doc.id)) ?? /* @__PURE__ */ new Map();
   const ranked = docs.map((entry) => {
     const actionStat = stats.get(entry.doc.id);
+    const queryStat = queryStats.get(entry.doc.id);
     const frequency = actionStat?.frequency ?? 0;
     const totalCount = actionStat?.totalCount ?? 0;
     const successCount = actionStat?.successCount ?? 0;
     const successRate = totalCount > 0 ? successCount / totalCount : 0;
+    const queryTotalCount = queryStat?.totalCount ?? 0;
+    const querySuccessRate = queryTotalCount > 0 ? (queryStat?.successCount ?? 0) / queryTotalCount : 0;
     const activityAt = actionStat?.lastUsedAt && actionStat.lastUsedAt > 0 ? actionStat.lastUsedAt : entry.doc.updatedAt;
     const score = computeWeightedScore({
       lexical: entry.lexical,
@@ -21226,6 +21536,17 @@ function rankRows(query, docs) {
       category: entry.doc.category,
       fuzzyDistance: entry.fuzzyDistance,
       popularity: entry.doc.popularity
+    }) + computeLearnedUsageBoost({
+      category: entry.doc.category,
+      frequency,
+      successRate,
+      lastUsedAt: actionStat?.lastUsedAt ?? 0,
+      now
+    }) + computeQueryLearningBoost({
+      frequency: queryStat?.frequency ?? 0,
+      successRate: querySuccessRate,
+      lastUsedAt: queryStat?.lastUsedAt ?? 0,
+      now
     }) + internalSurfaceBoost(entry.doc.category, entry.doc.title, query, entry.doc.subtitle) + recentQuickNoteBoost(entry.doc.category, entry.doc.updatedAt, now) + exactRecentQuickNoteBoost(
       entry.doc.category,
       entry.doc.title,
@@ -21351,13 +21672,18 @@ function displayProcessNameFromCommand(command) {
   const parts = trimmed.split("/").filter(Boolean);
   return decodeLsofCommandName(parts.at(-1) ?? trimmed);
 }
+function appPathFromCommand(command) {
+  const decoded = decodeLsofCommandName(command);
+  const match = decoded.match(/(\/.*?\.app)(?:\/|$)/);
+  return match?.[1];
+}
 function parseProcessNameMap(stdout) {
   const names = /* @__PURE__ */ new Map();
   for (const line of stdout.split("\n")) {
     const match = line.match(/^\s*(\d+)\s+(.+?)\s*$/);
     if (!match) continue;
     const name = displayProcessNameFromCommand(match[2]);
-    if (name) names.set(match[1], name);
+    if (name) names.set(match[1], { name, appPath: appPathFromCommand(match[2]) });
   }
   return names;
 }
@@ -21381,7 +21707,8 @@ function parseOpenPortProcesses(stdout, processNames = /* @__PURE__ */ new Map()
     const port = Number(match[1]);
     if (!Number.isFinite(port)) continue;
     const pid = parts[1] ?? "?";
-    const process2 = processNames.get(pid) ?? decodeLsofCommandName(parts[0] ?? "unknown");
+    const identity = processNames.get(pid);
+    const process2 = identity?.name ?? decodeLsofCommandName(parts[0] ?? "unknown");
     const user = parts[2] ?? "unknown";
     const key = `${process2}:${pid}:${user}`;
     const existing = grouped.get(key);
@@ -21393,15 +21720,33 @@ function parseOpenPortProcesses(stdout, processNames = /* @__PURE__ */ new Map()
       process: process2,
       user,
       pid,
-      ports: /* @__PURE__ */ new Set([port])
+      ports: /* @__PURE__ */ new Set([port]),
+      appPath: identity?.appPath
     });
   }
   return Array.from(grouped.values()).map((entry) => ({
     process: entry.process,
     user: entry.user,
     pid: entry.pid,
-    ports: Array.from(entry.ports).sort((a, b) => a - b)
+    ports: Array.from(entry.ports).sort((a, b) => a - b),
+    appPath: entry.appPath
   })).sort((a, b) => a.process.localeCompare(b.process) || a.pid.localeCompare(b.pid));
+}
+async function attachOpenPortProcessIcons(rows) {
+  const uniqueAppPaths = Array.from(
+    new Set(rows.map((row) => row.appPath).filter((path7) => Boolean(path7)))
+  );
+  const icons = /* @__PURE__ */ new Map();
+  await Promise.all(
+    uniqueAppPaths.map(async (appPath) => {
+      const icon = await appIconDataUrl(appPath);
+      if (icon) icons.set(appPath, icon);
+    })
+  );
+  return rows.map(({ appPath, ...row }) => {
+    const iconDataUrl = appPath ? icons.get(appPath) : void 0;
+    return iconDataUrl ? { ...row, iconDataUrl } : row;
+  });
 }
 async function searchEverything(query) {
   await bootstrapSearchIndex();
@@ -21410,7 +21755,8 @@ async function searchEverything(query) {
   if (!trimmed) {
     return attachSearchResultIcons(buildRecommendations());
   }
-  const rows = indexDb.getSearch(trimmed, MAX_RESULTS);
+  const learnedRows = indexDb.getDocumentsByIds(indexDb.listQueryActionIds(trimmed, 20));
+  const rows = uniqRowsById([...indexDb.getSearch(trimmed, MAX_RESULTS), ...learnedRows]);
   const docs = rows.map(
     (row) => ({
       doc: {
@@ -21932,12 +22278,12 @@ async function listOpenPorts() {
   try {
     const { stdout } = await execFileAsync11("/usr/sbin/lsof", ["-nP", "-iTCP", "-sTCP:LISTEN"]);
     const processNames = await readProcessNameMap();
-    return parseOpenPortProcesses(stdout, processNames);
+    return attachOpenPortProcessIcons(parseOpenPortProcesses(stdout, processNames));
   } catch (error) {
     console.error("[OpenPorts] Failed to list listening ports:", error);
     try {
       const { stdout } = await execFileAsync11("/usr/sbin/lsof", ["-nP", "-iTCP", "-sTCP:LISTEN"]);
-      return parseOpenPortProcesses(stdout);
+      return attachOpenPortProcessIcons(parseOpenPortProcesses(stdout));
     } catch (fallbackError) {
       console.error("[OpenPorts] Fallback listing failed:", fallbackError);
       return [];
@@ -21994,7 +22340,7 @@ async function executeActionInner(action) {
       return { ok: true, message: "Opened URL" };
     }
     case "install-extension": {
-      await installExtension(action.extensionId);
+      await installExtension2(action.extensionId);
       return { ok: true, message: `Installing ${action.extensionId}` };
     }
     case "run-extension-command": {
@@ -22072,6 +22418,9 @@ async function executeSearchAction(action, context) {
   }
   const actionId = actionIdFromResult(action, context?.resultId);
   indexDb.recordAction(actionId, result.ok);
+  if (context?.query && result.ok) {
+    indexDb.recordActionForQuery(context.query, actionId, true);
+  }
   if (result.ok && action.type === "open-with-app" && action.appName && context?.query) {
     const parsed = splitPathCompletionQuery(context.query);
     if (parsed.appMode && parsed.appTerm) {
@@ -22082,6 +22431,17 @@ async function executeSearchAction(action, context) {
     indexDb.recordClick(context.query, actionId, context.rank, result.ok);
   }
   return result;
+}
+async function recordSearchActionUsage(action, context) {
+  await indexDb.ensureInitialized();
+  const actionId = actionIdFromResult(action, context?.resultId);
+  indexDb.recordAction(actionId, true);
+  if (context?.query) {
+    indexDb.recordActionForQuery(context.query, actionId, true);
+  }
+  if (context?.query && typeof context.rank === "number" && Number.isFinite(context.rank)) {
+    indexDb.recordClick(context.query, actionId, context.rank, true);
+  }
 }
 
 // src/main/currency/frankfurter.ts
@@ -24117,15 +24477,12 @@ function registerIpcHandlers(getWindow, controls) {
     await shell.openExternal(url);
   });
   ipcMain.handle("github-device-start", async (_event, clientId) => {
-    if (typeof clientId !== "string" || !clientId.trim()) {
-      throw new Error("GitHub OAuth Client ID is required for device sign-in.");
-    }
-    return startGithubDeviceFlow(clientId.trim());
+    return startGithubDeviceFlow(typeof clientId === "string" ? clientId : void 0);
   });
   ipcMain.handle("github-device-poll", async () => {
     const r = await pollGithubDeviceFlow();
     if (r.status === "success") {
-      persistCopilotTokens(r.access_token, r.refresh_token, r.expires_in);
+      persistCopilotTokens(r.access_token, r.refresh_token, r.expires_in, r.client_id);
       invalidateProviderCache();
     }
     return r;
@@ -24329,7 +24686,7 @@ function registerIpcHandlers(getWindow, controls) {
     if (typeof extensionId !== "string" || !extensionId.trim()) {
       throw new Error("A valid extension id is required");
     }
-    const result = await installExtension(extensionId);
+    const result = await installExtension2(extensionId);
     await reindexExtensions();
     return result;
   });
@@ -24337,7 +24694,7 @@ function registerIpcHandlers(getWindow, controls) {
     if (typeof extensionId !== "string" || !extensionId.trim()) {
       throw new Error("A valid extension id is required");
     }
-    const result = await uninstallExtension(extensionId);
+    const result = await uninstallExtension2(extensionId);
     await reindexExtensions();
     return result;
   });
@@ -24496,6 +24853,48 @@ function registerIpcHandlers(getWindow, controls) {
     const commandName2 = typeof body.commandName === "string" ? body.commandName : void 0;
     return saveExtensionPreferences(body.extensionId, values, commandName2);
   });
+  ipcMain.handle("get-installed-extensions-settings-schema", async () => {
+    return getInstalledExtensionsSettingsSchema();
+  });
+  ipcMain.handle("toggle-command-enabled", async (_event, commandId, enabled) => {
+    const disabled = { ...getDisabledCommands() };
+    if (enabled) {
+      delete disabled[commandId];
+    } else {
+      disabled[commandId] = true;
+    }
+    setDisabledCommands(disabled);
+    await reindexExtensions();
+    return true;
+  });
+  ipcMain.handle("update-command-hotkey", async (_event, commandId, hotkey) => {
+    if (controls?.updateCommandHotkey) {
+      return controls.updateCommandHotkey(commandId, hotkey);
+    }
+    return { ok: false, error: "Controls not initialized" };
+  });
+  ipcMain.handle("get-settings", async () => {
+    return {
+      commandHotkeys: getCommandHotkeys(),
+      commandAliases: getCommandAliases(),
+      disabledCommands: getDisabledCommands()
+    };
+  });
+  ipcMain.handle("save-settings", async (_event, patch) => {
+    if (!patch || typeof patch !== "object") return {};
+    const body = patch;
+    if (body.commandAliases) {
+      setCommandAliases(body.commandAliases);
+    }
+    await reindexExtensions();
+    return { ok: true };
+  });
+  ipcMain.handle("app:open-extensions", async () => {
+    if (controls?.openAppSurface) {
+      controls.openAppSurface("extensions");
+    }
+    return true;
+  });
   ipcMain.handle(IPC_CHANNELS.SEARCH_ALL, async (_event, query) => {
     const q = typeof query === "string" ? query : "";
     return searchEverything(q);
@@ -24544,6 +24943,10 @@ function registerIpcHandlers(getWindow, controls) {
       }
       return executeSearchAction(payload);
     }
+  });
+  ipcMain.handle(IPC_CHANNELS.SEARCH_RECORD_USAGE, async (_event, payload) => {
+    const request = parseSearchExecuteRequest(payload);
+    await recordSearchActionUsage(request.action, request.context);
   });
   ipcMain.handle(IPC_CHANNELS.AI_ACTION, async (_event, payload) => {
     const req = parseAiActionRequest(payload);
