@@ -3,11 +3,11 @@
 import { invoke } from '@tauri-apps/api/core'
 import { emitTo, listen } from '@tauri-apps/api/event'
 import { getCurrentWindow } from '@tauri-apps/api/window'
-import type { RaymesApi } from '../shared/desktop-api'
+import type { TezbarApi } from '../shared/desktop-api'
 import type { AppUpdateStatus } from '../shared/updater'
 import { formatTerminalSessionName, type TerminalSessionsAction } from '../shared/terminal'
 
-type TauriRaymesApi = RaymesApi & {
+export type TauriTezbarApi = TezbarApi & {
   moveMouse: (x: number, y: number) => Promise<unknown>
   click: (x: number, y: number, button: string) => Promise<unknown>
   doubleClick: (x: number, y: number) => Promise<unknown>
@@ -17,6 +17,8 @@ type TauriRaymesApi = RaymesApi & {
   screenshot: () => Promise<string>
   isPhysicalKeyDown: (key: string) => Promise<unknown>
 }
+
+export type TauriRaymesApi = TauriTezbarApi
 
 export function initTauriBridge(): void {
   // Check if we are running inside Tauri
@@ -137,7 +139,7 @@ export function initTauriBridge(): void {
     console.error('[Tauri bridge] Failed to listen for terminal exit events:', error)
   })
 
-  const tezbar: TauriRaymesApi = {
+  const tezbar: TauriTezbarApi = {
     hide: () => invoke('hide_window'),
     show: () => invoke('show_window'),
     openSettingsWindow: () => invoke('open_settings_window_cmd'),
@@ -216,13 +218,21 @@ export function initTauriBridge(): void {
 
     getLlmConfig: () => callBackend('llm-config-get'),
     setLlmConfig: async (patch: any) => {
-      if (typeof patch?.raymesHotkey === 'string') {
+      const targetHotkey =
+        typeof patch?.tezbarHotkey === 'string'
+          ? patch.tezbarHotkey
+          : typeof patch?.raymesHotkey === 'string'
+            ? patch.raymesHotkey
+            : null
+      if (targetHotkey !== null) {
         try {
-          await invoke('update_raymes_shortcut', { shortcutStr: patch.raymesHotkey })
+          await invoke('update_tezbar_shortcut', { shortcutStr: targetHotkey }).catch(() =>
+            invoke('update_raymes_shortcut', { shortcutStr: targetHotkey })
+          )
         } catch (error) {
           return {
             ok: false,
-            accelerator: patch.raymesHotkey,
+            accelerator: targetHotkey,
             error: error instanceof Error ? error.message : String(error),
           }
         }
@@ -551,8 +561,16 @@ export function initTauriBridge(): void {
     void tezbar
       .getLlmConfig()
       .then((config) => {
-        if (typeof config.raymesHotkey === 'string' && config.raymesHotkey.trim()) {
-          return invoke('update_raymes_shortcut', { shortcutStr: config.raymesHotkey })
+        const shortcut =
+          typeof config.tezbarHotkey === 'string' && config.tezbarHotkey.trim()
+            ? config.tezbarHotkey
+            : typeof config.raymesHotkey === 'string' && config.raymesHotkey.trim()
+              ? config.raymesHotkey
+              : null
+        if (shortcut) {
+          return invoke('update_tezbar_shortcut', { shortcutStr: shortcut }).catch(() =>
+            invoke('update_raymes_shortcut', { shortcutStr: shortcut })
+          )
         }
       })
       .catch((error: unknown) => {

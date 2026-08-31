@@ -11,7 +11,9 @@ export type AiChatBoot =
   | { kind: 'resume'; sessionId: string }
 
 /** Dispatched from App when ⌘N fires on the command surface (quick note). */
-export const RAYMES_QUICK_NOTE_SHORTCUT_EVENT = 'tezbar:quick-note-shortcut'
+export const TEZBAR_QUICK_NOTE_SHORTCUT_EVENT = 'tezbar:quick-note-shortcut'
+export const RAYMES_QUICK_NOTE_SHORTCUT_EVENT = TEZBAR_QUICK_NOTE_SHORTCUT_EVENT
 
 /** Dispatched from App when ⌘N should start a new chat (AI chat surface). */
-export const RAYMES_AI_NEW_CHAT_EVENT = 'tezbar:ai-new-chat'
+export const TEZBAR_AI_NEW_CHAT_EVENT = 'tezbar:ai-new-chat'
+export const RAYMES_AI_NEW_CHAT_EVENT = TEZBAR_AI_NEW_CHAT_EVENT

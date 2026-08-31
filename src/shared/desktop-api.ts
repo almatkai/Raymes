@@ -85,7 +85,7 @@ export type HotkeyUpdateResult = {
   error?: string
 }
 
-export type RaymesApi = {
+export type TezbarApi = {
   hide: () => Promise<void>
   show: () => Promise<void>
   openSettingsWindow: () => Promise<void>
@@ -339,7 +339,7 @@ export type RaymesApi = {
   agentRun: (
     request: string | AgentRunRequest
   ) => Promise<{ ok: boolean; runId?: string; error?: string }>
-  /** Capture the display under the pointer while temporarily hiding the Raymes window. */
+  /** Capture the display under the pointer while temporarily hiding the Tezbar window. */
   captureActiveScreen: () => Promise<AgentInputImage>
   /** Abort the currently running agent task, if any. */
   agentCancel: () => Promise<{ ok: boolean }>
@@ -449,3 +449,6 @@ export type RaymesApi = {
   /** Subscribe to native update-tracker status changes. */
   onUpdateStatus: (listener: (status: AppUpdateStatus) => void) => () => void
 }
+
+/** @deprecated Use `TezbarApi` instead. */
+export type RaymesApi = TezbarApi

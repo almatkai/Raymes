@@ -15,7 +15,7 @@ import { isIndexablePath } from './extractors/localExtractor'
 const cleanup: string[] = []
 
 afterEach(async () => {
-  await Promise.all(cleanup.splice(0).map((path) => rm(path, { recursive: true, force: true })))
+  await Promise.allSettled(cleanup.splice(0).map((path) => rm(path, { recursive: true, force: true })))
 })
 
 async function waitUntilComplete(service: KnowledgeService): Promise<void> {

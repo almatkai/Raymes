@@ -5,8 +5,13 @@ var __getOwnPropDesc = Object.getOwnPropertyDescriptor;
 var __getOwnPropNames = Object.getOwnPropertyNames;
 var __getProtoOf = Object.getPrototypeOf;
 var __hasOwnProp = Object.prototype.hasOwnProperty;
-var __esm = (fn, res) => function __init() {
-  return fn && (res = (0, fn[__getOwnPropNames(fn)[0]])(fn = 0)), res;
+var __esm = (fn, res, err) => function __init() {
+  if (err) throw err[0];
+  try {
+    return fn && (res = (0, fn[__getOwnPropNames(fn)[0]])(fn = 0)), res;
+  } catch (e) {
+    throw err = [e], e;
+  }
 };
 var __export = (target, all) => {
   for (var name in all)
@@ -815,11 +820,12 @@ function addAgentAlwaysAllowedExactCommand(command3) {
     )
   });
 }
-function getRaymesHotkey() {
-  const value = readRawConfig().raymesHotkey;
-  if (typeof value !== "string" || !value.trim()) return DEFAULT_RAYMES_HOTKEY;
+function getTezbarHotkey() {
+  const config = readRawConfig();
+  const value = typeof config.tezbarHotkey === "string" && config.tezbarHotkey.trim() ? config.tezbarHotkey : config.raymesHotkey;
+  if (typeof value !== "string" || !value.trim()) return DEFAULT_TEZBAR_HOTKEY;
   if (process.platform === "win32" && value.trim().toLowerCase() === "alt+space") {
-    return DEFAULT_RAYMES_HOTKEY;
+    return DEFAULT_TEZBAR_HOTKEY;
   }
   return value;
 }
@@ -850,7 +856,7 @@ function getDisabledCommands() {
 function setDisabledCommands(disabled) {
   writeConfigPatch({ disabledCommands: disabled });
 }
-var import_node_fs5, import_node_os6, import_node_path6, OPENRAY_CONFIG_DIR, OPENRAY_CONFIG_PATH, DEFAULT_RAYMES_HOTKEY, configCache, writeTimeout;
+var import_node_fs5, import_node_os6, import_node_path6, OPENRAY_CONFIG_DIR, OPENRAY_CONFIG_PATH, DEFAULT_TEZBAR_HOTKEY, configCache, writeTimeout;
 var init_configStore = __esm({
   "src/main/llm/configStore.ts"() {
     "use strict";
@@ -860,7 +866,7 @@ var init_configStore = __esm({
     init_llmConfig();
     OPENRAY_CONFIG_DIR = (0, import_node_path6.join)((0, import_node_os6.homedir)(), ".openray");
     OPENRAY_CONFIG_PATH = (0, import_node_path6.join)(OPENRAY_CONFIG_DIR, "config.json");
-    DEFAULT_RAYMES_HOTKEY = process.platform === "win32" ? "Control+Space" : "Alt+Space";
+    DEFAULT_TEZBAR_HOTKEY = process.platform === "win32" ? "Control+Space" : "Alt+Space";
     configCache = null;
     writeTimeout = null;
   }
@@ -3704,7 +3710,7 @@ var init_aiProviders = __esm({
   }
 });
 
-// node_modules/.pnpm/@anthropic-ai+sdk@0.90.0/node_modules/@anthropic-ai/sdk/internal/tslib.mjs
+// node_modules/@anthropic-ai/sdk/internal/tslib.mjs
 function __classPrivateFieldSet(receiver, state, value, kind, f) {
   if (kind === "m")
     throw new TypeError("Private method is not writable");
@@ -3722,14 +3728,14 @@ function __classPrivateFieldGet(receiver, state, kind, f) {
   return kind === "m" ? f : kind === "a" ? f.call(receiver) : f ? f.value : state.get(receiver);
 }
 var init_tslib = __esm({
-  "node_modules/.pnpm/@anthropic-ai+sdk@0.90.0/node_modules/@anthropic-ai/sdk/internal/tslib.mjs"() {
+  "node_modules/@anthropic-ai/sdk/internal/tslib.mjs"() {
   }
 });
 
-// node_modules/.pnpm/@anthropic-ai+sdk@0.90.0/node_modules/@anthropic-ai/sdk/internal/utils/uuid.mjs
+// node_modules/@anthropic-ai/sdk/internal/utils/uuid.mjs
 var uuid4;
 var init_uuid = __esm({
-  "node_modules/.pnpm/@anthropic-ai+sdk@0.90.0/node_modules/@anthropic-ai/sdk/internal/utils/uuid.mjs"() {
+  "node_modules/@anthropic-ai/sdk/internal/utils/uuid.mjs"() {
     uuid4 = function() {
       const { crypto } = globalThis;
       if (crypto?.randomUUID) {
@@ -3743,7 +3749,7 @@ var init_uuid = __esm({
   }
 });
 
-// node_modules/.pnpm/@anthropic-ai+sdk@0.90.0/node_modules/@anthropic-ai/sdk/internal/errors.mjs
+// node_modules/@anthropic-ai/sdk/internal/errors.mjs
 function isAbortError(err) {
   return typeof err === "object" && err !== null && // Spec-compliant fetch implementations
   ("name" in err && err.name === "AbortError" || // Expo fetch
@@ -3751,7 +3757,7 @@ function isAbortError(err) {
 }
 var castToError;
 var init_errors = __esm({
-  "node_modules/.pnpm/@anthropic-ai+sdk@0.90.0/node_modules/@anthropic-ai/sdk/internal/errors.mjs"() {
+  "node_modules/@anthropic-ai/sdk/internal/errors.mjs"() {
     castToError = (err) => {
       if (err instanceof Error)
         return err;
@@ -3779,10 +3785,10 @@ var init_errors = __esm({
   }
 });
 
-// node_modules/.pnpm/@anthropic-ai+sdk@0.90.0/node_modules/@anthropic-ai/sdk/core/error.mjs
+// node_modules/@anthropic-ai/sdk/core/error.mjs
 var AnthropicError, APIError, APIUserAbortError, APIConnectionError, APIConnectionTimeoutError, BadRequestError, AuthenticationError, PermissionDeniedError, NotFoundError, ConflictError, UnprocessableEntityError, RateLimitError, InternalServerError;
 var init_error = __esm({
-  "node_modules/.pnpm/@anthropic-ai+sdk@0.90.0/node_modules/@anthropic-ai/sdk/core/error.mjs"() {
+  "node_modules/@anthropic-ai/sdk/core/error.mjs"() {
     init_errors();
     AnthropicError = class extends Error {
     };
@@ -3877,7 +3883,7 @@ var init_error = __esm({
   }
 });
 
-// node_modules/.pnpm/@anthropic-ai+sdk@0.90.0/node_modules/@anthropic-ai/sdk/internal/utils/values.mjs
+// node_modules/@anthropic-ai/sdk/internal/utils/values.mjs
 function maybeObj(x) {
   if (typeof x !== "object") {
     return {};
@@ -3896,7 +3902,7 @@ function hasOwn2(obj, key) {
 }
 var startsWithSchemeRegexp, isAbsoluteURL, isArray2, isReadonlyArray, validatePositiveInteger, safeJSON;
 var init_values = __esm({
-  "node_modules/.pnpm/@anthropic-ai+sdk@0.90.0/node_modules/@anthropic-ai/sdk/internal/utils/values.mjs"() {
+  "node_modules/@anthropic-ai/sdk/internal/utils/values.mjs"() {
     init_error();
     startsWithSchemeRegexp = /^[a-z][a-z0-9+.-]*:/i;
     isAbsoluteURL = (url) => {
@@ -3923,23 +3929,23 @@ var init_values = __esm({
   }
 });
 
-// node_modules/.pnpm/@anthropic-ai+sdk@0.90.0/node_modules/@anthropic-ai/sdk/internal/utils/sleep.mjs
+// node_modules/@anthropic-ai/sdk/internal/utils/sleep.mjs
 var sleep;
 var init_sleep = __esm({
-  "node_modules/.pnpm/@anthropic-ai+sdk@0.90.0/node_modules/@anthropic-ai/sdk/internal/utils/sleep.mjs"() {
+  "node_modules/@anthropic-ai/sdk/internal/utils/sleep.mjs"() {
     sleep = (ms) => new Promise((resolve6) => setTimeout(resolve6, ms));
   }
 });
 
-// node_modules/.pnpm/@anthropic-ai+sdk@0.90.0/node_modules/@anthropic-ai/sdk/version.mjs
+// node_modules/@anthropic-ai/sdk/version.mjs
 var VERSION;
 var init_version = __esm({
-  "node_modules/.pnpm/@anthropic-ai+sdk@0.90.0/node_modules/@anthropic-ai/sdk/version.mjs"() {
+  "node_modules/@anthropic-ai/sdk/version.mjs"() {
     VERSION = "0.90.0";
   }
 });
 
-// node_modules/.pnpm/@anthropic-ai+sdk@0.90.0/node_modules/@anthropic-ai/sdk/internal/detect-platform.mjs
+// node_modules/@anthropic-ai/sdk/internal/detect-platform.mjs
 function getDetectedPlatform() {
   if (typeof Deno !== "undefined" && Deno.build != null) {
     return "deno";
@@ -3977,7 +3983,7 @@ function getBrowserInfo() {
 }
 var isRunningInBrowser, getPlatformProperties, normalizeArch, normalizePlatform2, _platformHeaders, getPlatformHeaders;
 var init_detect_platform = __esm({
-  "node_modules/.pnpm/@anthropic-ai+sdk@0.90.0/node_modules/@anthropic-ai/sdk/internal/detect-platform.mjs"() {
+  "node_modules/@anthropic-ai/sdk/internal/detect-platform.mjs"() {
     init_version();
     isRunningInBrowser = () => {
       return (
@@ -4078,7 +4084,7 @@ var init_detect_platform = __esm({
   }
 });
 
-// node_modules/.pnpm/@anthropic-ai+sdk@0.90.0/node_modules/@anthropic-ai/sdk/internal/shims.mjs
+// node_modules/@anthropic-ai/sdk/internal/shims.mjs
 function getDefaultFetch() {
   if (typeof fetch !== "undefined") {
     return fetch;
@@ -4150,14 +4156,14 @@ async function CancelReadableStream(stream) {
   await cancelPromise;
 }
 var init_shims = __esm({
-  "node_modules/.pnpm/@anthropic-ai+sdk@0.90.0/node_modules/@anthropic-ai/sdk/internal/shims.mjs"() {
+  "node_modules/@anthropic-ai/sdk/internal/shims.mjs"() {
   }
 });
 
-// node_modules/.pnpm/@anthropic-ai+sdk@0.90.0/node_modules/@anthropic-ai/sdk/internal/request-options.mjs
+// node_modules/@anthropic-ai/sdk/internal/request-options.mjs
 var FallbackEncoder;
 var init_request_options = __esm({
-  "node_modules/.pnpm/@anthropic-ai+sdk@0.90.0/node_modules/@anthropic-ai/sdk/internal/request-options.mjs"() {
+  "node_modules/@anthropic-ai/sdk/internal/request-options.mjs"() {
     FallbackEncoder = ({ headers, body }) => {
       return {
         bodyHeaders: {
@@ -4169,7 +4175,7 @@ var init_request_options = __esm({
   }
 });
 
-// node_modules/.pnpm/@anthropic-ai+sdk@0.90.0/node_modules/@anthropic-ai/sdk/internal/utils/query.mjs
+// node_modules/@anthropic-ai/sdk/internal/utils/query.mjs
 function stringifyQuery(query) {
   return Object.entries(query).filter(([_, value]) => typeof value !== "undefined").map(([key, value]) => {
     if (typeof value === "string" || typeof value === "number" || typeof value === "boolean") {
@@ -4182,12 +4188,12 @@ function stringifyQuery(query) {
   }).join("&");
 }
 var init_query = __esm({
-  "node_modules/.pnpm/@anthropic-ai+sdk@0.90.0/node_modules/@anthropic-ai/sdk/internal/utils/query.mjs"() {
+  "node_modules/@anthropic-ai/sdk/internal/utils/query.mjs"() {
     init_error();
   }
 });
 
-// node_modules/.pnpm/@anthropic-ai+sdk@0.90.0/node_modules/@anthropic-ai/sdk/internal/utils/bytes.mjs
+// node_modules/@anthropic-ai/sdk/internal/utils/bytes.mjs
 function concatBytes(buffers) {
   let length = 0;
   for (const buffer of buffers) {
@@ -4211,11 +4217,11 @@ function decodeUTF8(bytes) {
 }
 var encodeUTF8_, decodeUTF8_;
 var init_bytes = __esm({
-  "node_modules/.pnpm/@anthropic-ai+sdk@0.90.0/node_modules/@anthropic-ai/sdk/internal/utils/bytes.mjs"() {
+  "node_modules/@anthropic-ai/sdk/internal/utils/bytes.mjs"() {
   }
 });
 
-// node_modules/.pnpm/@anthropic-ai+sdk@0.90.0/node_modules/@anthropic-ai/sdk/internal/decoders/line.mjs
+// node_modules/@anthropic-ai/sdk/internal/decoders/line.mjs
 function findNewlineIndex(buffer, startIndex) {
   const newline = 10;
   const carriage = 13;
@@ -4247,7 +4253,7 @@ function findDoubleNewlineIndex(buffer) {
 }
 var _LineDecoder_buffer, _LineDecoder_carriageReturnIndex, LineDecoder;
 var init_line = __esm({
-  "node_modules/.pnpm/@anthropic-ai+sdk@0.90.0/node_modules/@anthropic-ai/sdk/internal/decoders/line.mjs"() {
+  "node_modules/@anthropic-ai/sdk/internal/decoders/line.mjs"() {
     init_tslib();
     init_bytes();
     LineDecoder = class {
@@ -4297,7 +4303,7 @@ var init_line = __esm({
   }
 });
 
-// node_modules/.pnpm/@anthropic-ai+sdk@0.90.0/node_modules/@anthropic-ai/sdk/internal/utils/log.mjs
+// node_modules/@anthropic-ai/sdk/internal/utils/log.mjs
 function noop() {
 }
 function makeLogFn(fnLevel, logger, logLevel) {
@@ -4328,7 +4334,7 @@ function loggerFor(client) {
 }
 var levelNumbers, parseLogLevel, noopLogger, cachedLoggers, formatRequestDetails;
 var init_log = __esm({
-  "node_modules/.pnpm/@anthropic-ai+sdk@0.90.0/node_modules/@anthropic-ai/sdk/internal/utils/log.mjs"() {
+  "node_modules/@anthropic-ai/sdk/internal/utils/log.mjs"() {
     init_values();
     levelNumbers = {
       off: 0,
@@ -4376,7 +4382,7 @@ var init_log = __esm({
   }
 });
 
-// node_modules/.pnpm/@anthropic-ai+sdk@0.90.0/node_modules/@anthropic-ai/sdk/core/streaming.mjs
+// node_modules/@anthropic-ai/sdk/core/streaming.mjs
 async function* _iterSSEMessages(response, controller) {
   if (!response.body) {
     controller.abort();
@@ -4431,7 +4437,7 @@ function partition(str2, delimiter3) {
 }
 var _Stream_client, Stream, SSEDecoder;
 var init_streaming = __esm({
-  "node_modules/.pnpm/@anthropic-ai+sdk@0.90.0/node_modules/@anthropic-ai/sdk/core/streaming.mjs"() {
+  "node_modules/@anthropic-ai/sdk/core/streaming.mjs"() {
     init_tslib();
     init_error();
     init_shims();
@@ -4641,7 +4647,7 @@ var init_streaming = __esm({
   }
 });
 
-// node_modules/.pnpm/@anthropic-ai+sdk@0.90.0/node_modules/@anthropic-ai/sdk/internal/parse.mjs
+// node_modules/@anthropic-ai/sdk/internal/parse.mjs
 async function defaultParseResponse(client, props) {
   const { response, requestLogID, retryOfRequestLogID, startTime } = props;
   const body = await (async () => {
@@ -4691,16 +4697,16 @@ function addRequestID(value, response) {
   });
 }
 var init_parse = __esm({
-  "node_modules/.pnpm/@anthropic-ai+sdk@0.90.0/node_modules/@anthropic-ai/sdk/internal/parse.mjs"() {
+  "node_modules/@anthropic-ai/sdk/internal/parse.mjs"() {
     init_streaming();
     init_log();
   }
 });
 
-// node_modules/.pnpm/@anthropic-ai+sdk@0.90.0/node_modules/@anthropic-ai/sdk/core/api-promise.mjs
+// node_modules/@anthropic-ai/sdk/core/api-promise.mjs
 var _APIPromise_client, APIPromise;
 var init_api_promise = __esm({
-  "node_modules/.pnpm/@anthropic-ai+sdk@0.90.0/node_modules/@anthropic-ai/sdk/core/api-promise.mjs"() {
+  "node_modules/@anthropic-ai/sdk/core/api-promise.mjs"() {
     init_tslib();
     init_parse();
     APIPromise = class _APIPromise extends Promise {
@@ -4766,10 +4772,10 @@ var init_api_promise = __esm({
   }
 });
 
-// node_modules/.pnpm/@anthropic-ai+sdk@0.90.0/node_modules/@anthropic-ai/sdk/core/pagination.mjs
+// node_modules/@anthropic-ai/sdk/core/pagination.mjs
 var _AbstractPage_client, AbstractPage, PagePromise, Page, PageCursor;
 var init_pagination = __esm({
-  "node_modules/.pnpm/@anthropic-ai+sdk@0.90.0/node_modules/@anthropic-ai/sdk/core/pagination.mjs"() {
+  "node_modules/@anthropic-ai/sdk/core/pagination.mjs"() {
     init_tslib();
     init_error();
     init_parse();
@@ -4900,7 +4906,7 @@ var init_pagination = __esm({
   }
 });
 
-// node_modules/.pnpm/@anthropic-ai+sdk@0.90.0/node_modules/@anthropic-ai/sdk/internal/uploads.mjs
+// node_modules/@anthropic-ai/sdk/internal/uploads.mjs
 function makeFile(fileBits, fileName, options) {
   checkFileSupport();
   return new File(fileBits, fileName ?? "unknown_file", options);
@@ -4931,7 +4937,7 @@ function supportsFormData(fetchObject) {
 }
 var checkFileSupport, isAsyncIterable, multipartFormRequestOptions, supportsFormDataMap, createForm, isNamedBlob, addFormValue;
 var init_uploads = __esm({
-  "node_modules/.pnpm/@anthropic-ai+sdk@0.90.0/node_modules/@anthropic-ai/sdk/internal/uploads.mjs"() {
+  "node_modules/@anthropic-ai/sdk/internal/uploads.mjs"() {
     init_shims();
     checkFileSupport = () => {
       if (typeof File === "undefined") {
@@ -4984,7 +4990,7 @@ var init_uploads = __esm({
   }
 });
 
-// node_modules/.pnpm/@anthropic-ai+sdk@0.90.0/node_modules/@anthropic-ai/sdk/internal/to-file.mjs
+// node_modules/@anthropic-ai/sdk/internal/to-file.mjs
 async function toFile(value, name, options) {
   checkFileSupport();
   value = await value;
@@ -5038,7 +5044,7 @@ function propsForError(value) {
 }
 var isBlobLike, isFileLike, isResponseLike;
 var init_to_file = __esm({
-  "node_modules/.pnpm/@anthropic-ai+sdk@0.90.0/node_modules/@anthropic-ai/sdk/internal/to-file.mjs"() {
+  "node_modules/@anthropic-ai/sdk/internal/to-file.mjs"() {
     init_uploads();
     init_uploads();
     isBlobLike = (value) => value != null && typeof value === "object" && typeof value.size === "number" && typeof value.type === "string" && typeof value.text === "function" && typeof value.slice === "function" && typeof value.arrayBuffer === "function";
@@ -5047,23 +5053,23 @@ var init_to_file = __esm({
   }
 });
 
-// node_modules/.pnpm/@anthropic-ai+sdk@0.90.0/node_modules/@anthropic-ai/sdk/core/uploads.mjs
+// node_modules/@anthropic-ai/sdk/core/uploads.mjs
 var init_uploads2 = __esm({
-  "node_modules/.pnpm/@anthropic-ai+sdk@0.90.0/node_modules/@anthropic-ai/sdk/core/uploads.mjs"() {
+  "node_modules/@anthropic-ai/sdk/core/uploads.mjs"() {
     init_to_file();
   }
 });
 
-// node_modules/.pnpm/@anthropic-ai+sdk@0.90.0/node_modules/@anthropic-ai/sdk/resources/shared.mjs
+// node_modules/@anthropic-ai/sdk/resources/shared.mjs
 var init_shared = __esm({
-  "node_modules/.pnpm/@anthropic-ai+sdk@0.90.0/node_modules/@anthropic-ai/sdk/resources/shared.mjs"() {
+  "node_modules/@anthropic-ai/sdk/resources/shared.mjs"() {
   }
 });
 
-// node_modules/.pnpm/@anthropic-ai+sdk@0.90.0/node_modules/@anthropic-ai/sdk/core/resource.mjs
+// node_modules/@anthropic-ai/sdk/core/resource.mjs
 var APIResource;
 var init_resource = __esm({
-  "node_modules/.pnpm/@anthropic-ai+sdk@0.90.0/node_modules/@anthropic-ai/sdk/core/resource.mjs"() {
+  "node_modules/@anthropic-ai/sdk/core/resource.mjs"() {
     APIResource = class {
       constructor(client) {
         this._client = client;
@@ -5072,7 +5078,7 @@ var init_resource = __esm({
   }
 });
 
-// node_modules/.pnpm/@anthropic-ai+sdk@0.90.0/node_modules/@anthropic-ai/sdk/internal/headers.mjs
+// node_modules/@anthropic-ai/sdk/internal/headers.mjs
 function* iterateHeaders(headers) {
   if (!headers)
     return;
@@ -5113,7 +5119,7 @@ function* iterateHeaders(headers) {
 }
 var brand_privateNullableHeaders, buildHeaders;
 var init_headers = __esm({
-  "node_modules/.pnpm/@anthropic-ai+sdk@0.90.0/node_modules/@anthropic-ai/sdk/internal/headers.mjs"() {
+  "node_modules/@anthropic-ai/sdk/internal/headers.mjs"() {
     init_values();
     brand_privateNullableHeaders = /* @__PURE__ */ Symbol.for("brand.privateNullableHeaders");
     buildHeaders = (newHeaders) => {
@@ -5141,13 +5147,13 @@ var init_headers = __esm({
   }
 });
 
-// node_modules/.pnpm/@anthropic-ai+sdk@0.90.0/node_modules/@anthropic-ai/sdk/internal/utils/path.mjs
+// node_modules/@anthropic-ai/sdk/internal/utils/path.mjs
 function encodeURIPath(str2) {
   return str2.replace(/[^A-Za-z0-9\-._~!$&'()*+,;=:@]+/g, encodeURIComponent);
 }
 var EMPTY, createPathTagFunction, path6;
 var init_path = __esm({
-  "node_modules/.pnpm/@anthropic-ai+sdk@0.90.0/node_modules/@anthropic-ai/sdk/internal/utils/path.mjs"() {
+  "node_modules/@anthropic-ai/sdk/internal/utils/path.mjs"() {
     init_error();
     EMPTY = /* @__PURE__ */ Object.freeze(/* @__PURE__ */ Object.create(null));
     createPathTagFunction = (pathEncoder = encodeURIPath) => function path7(statics, ...params) {
@@ -5202,10 +5208,10 @@ ${underline}`);
   }
 });
 
-// node_modules/.pnpm/@anthropic-ai+sdk@0.90.0/node_modules/@anthropic-ai/sdk/resources/beta/environments.mjs
+// node_modules/@anthropic-ai/sdk/resources/beta/environments.mjs
 var Environments;
 var init_environments = __esm({
-  "node_modules/.pnpm/@anthropic-ai+sdk@0.90.0/node_modules/@anthropic-ai/sdk/resources/beta/environments.mjs"() {
+  "node_modules/@anthropic-ai/sdk/resources/beta/environments.mjs"() {
     init_resource();
     init_pagination();
     init_headers();
@@ -5345,7 +5351,7 @@ var init_environments = __esm({
   }
 });
 
-// node_modules/.pnpm/@anthropic-ai+sdk@0.90.0/node_modules/@anthropic-ai/sdk/lib/stainless-helper-header.mjs
+// node_modules/@anthropic-ai/sdk/lib/stainless-helper-header.mjs
 function wasCreatedByStainlessHelper(value) {
   return typeof value === "object" && value !== null && SDK_HELPER_SYMBOL in value;
 }
@@ -5388,15 +5394,15 @@ function stainlessHelperHeaderFromFile(file) {
 }
 var SDK_HELPER_SYMBOL;
 var init_stainless_helper_header = __esm({
-  "node_modules/.pnpm/@anthropic-ai+sdk@0.90.0/node_modules/@anthropic-ai/sdk/lib/stainless-helper-header.mjs"() {
+  "node_modules/@anthropic-ai/sdk/lib/stainless-helper-header.mjs"() {
     SDK_HELPER_SYMBOL = /* @__PURE__ */ Symbol("anthropic.sdk.stainlessHelper");
   }
 });
 
-// node_modules/.pnpm/@anthropic-ai+sdk@0.90.0/node_modules/@anthropic-ai/sdk/resources/beta/files.mjs
+// node_modules/@anthropic-ai/sdk/resources/beta/files.mjs
 var Files;
 var init_files = __esm({
-  "node_modules/.pnpm/@anthropic-ai+sdk@0.90.0/node_modules/@anthropic-ai/sdk/resources/beta/files.mjs"() {
+  "node_modules/@anthropic-ai/sdk/resources/beta/files.mjs"() {
     init_resource();
     init_pagination();
     init_headers();
@@ -5518,10 +5524,10 @@ var init_files = __esm({
   }
 });
 
-// node_modules/.pnpm/@anthropic-ai+sdk@0.90.0/node_modules/@anthropic-ai/sdk/resources/beta/models.mjs
+// node_modules/@anthropic-ai/sdk/resources/beta/models.mjs
 var Models;
 var init_models = __esm({
-  "node_modules/.pnpm/@anthropic-ai+sdk@0.90.0/node_modules/@anthropic-ai/sdk/resources/beta/models.mjs"() {
+  "node_modules/@anthropic-ai/sdk/resources/beta/models.mjs"() {
     init_resource();
     init_pagination();
     init_headers();
@@ -5579,10 +5585,10 @@ var init_models = __esm({
   }
 });
 
-// node_modules/.pnpm/@anthropic-ai+sdk@0.90.0/node_modules/@anthropic-ai/sdk/resources/beta/user-profiles.mjs
+// node_modules/@anthropic-ai/sdk/resources/beta/user-profiles.mjs
 var UserProfiles;
 var init_user_profiles = __esm({
-  "node_modules/.pnpm/@anthropic-ai+sdk@0.90.0/node_modules/@anthropic-ai/sdk/resources/beta/user-profiles.mjs"() {
+  "node_modules/@anthropic-ai/sdk/resources/beta/user-profiles.mjs"() {
     init_resource();
     init_pagination();
     init_headers();
@@ -5698,10 +5704,10 @@ var init_user_profiles = __esm({
   }
 });
 
-// node_modules/.pnpm/@anthropic-ai+sdk@0.90.0/node_modules/@anthropic-ai/sdk/resources/beta/agents/versions.mjs
+// node_modules/@anthropic-ai/sdk/resources/beta/agents/versions.mjs
 var Versions;
 var init_versions = __esm({
-  "node_modules/.pnpm/@anthropic-ai+sdk@0.90.0/node_modules/@anthropic-ai/sdk/resources/beta/agents/versions.mjs"() {
+  "node_modules/@anthropic-ai/sdk/resources/beta/agents/versions.mjs"() {
     init_resource();
     init_pagination();
     init_headers();
@@ -5735,10 +5741,10 @@ var init_versions = __esm({
   }
 });
 
-// node_modules/.pnpm/@anthropic-ai+sdk@0.90.0/node_modules/@anthropic-ai/sdk/resources/beta/agents/agents.mjs
+// node_modules/@anthropic-ai/sdk/resources/beta/agents/agents.mjs
 var Agents;
 var init_agents = __esm({
-  "node_modules/.pnpm/@anthropic-ai+sdk@0.90.0/node_modules/@anthropic-ai/sdk/resources/beta/agents/agents.mjs"() {
+  "node_modules/@anthropic-ai/sdk/resources/beta/agents/agents.mjs"() {
     init_resource();
     init_versions();
     init_versions();
@@ -5866,17 +5872,17 @@ var init_agents = __esm({
   }
 });
 
-// node_modules/.pnpm/@anthropic-ai+sdk@0.90.0/node_modules/@anthropic-ai/sdk/error.mjs
+// node_modules/@anthropic-ai/sdk/error.mjs
 var init_error2 = __esm({
-  "node_modules/.pnpm/@anthropic-ai+sdk@0.90.0/node_modules/@anthropic-ai/sdk/error.mjs"() {
+  "node_modules/@anthropic-ai/sdk/error.mjs"() {
     init_error();
   }
 });
 
-// node_modules/.pnpm/@anthropic-ai+sdk@0.90.0/node_modules/@anthropic-ai/sdk/internal/constants.mjs
+// node_modules/@anthropic-ai/sdk/internal/constants.mjs
 var MODEL_NONSTREAMING_TOKENS;
 var init_constants = __esm({
-  "node_modules/.pnpm/@anthropic-ai+sdk@0.90.0/node_modules/@anthropic-ai/sdk/internal/constants.mjs"() {
+  "node_modules/@anthropic-ai/sdk/internal/constants.mjs"() {
     MODEL_NONSTREAMING_TOKENS = {
       "claude-opus-4-20250514": 8192,
       "claude-opus-4-0": 8192,
@@ -5890,7 +5896,7 @@ var init_constants = __esm({
   }
 });
 
-// node_modules/.pnpm/@anthropic-ai+sdk@0.90.0/node_modules/@anthropic-ai/sdk/lib/beta-parser.mjs
+// node_modules/@anthropic-ai/sdk/lib/beta-parser.mjs
 function getOutputFormat(params) {
   return params?.output_format ?? params?.output_config?.format;
 }
@@ -5963,15 +5969,15 @@ function parseBetaOutputFormat(params, content) {
   }
 }
 var init_beta_parser = __esm({
-  "node_modules/.pnpm/@anthropic-ai+sdk@0.90.0/node_modules/@anthropic-ai/sdk/lib/beta-parser.mjs"() {
+  "node_modules/@anthropic-ai/sdk/lib/beta-parser.mjs"() {
     init_error();
   }
 });
 
-// node_modules/.pnpm/@anthropic-ai+sdk@0.90.0/node_modules/@anthropic-ai/sdk/_vendor/partial-json-parser/parser.mjs
+// node_modules/@anthropic-ai/sdk/_vendor/partial-json-parser/parser.mjs
 var tokenize3, strip, unstrip, generate, partialParse;
 var init_parser = __esm({
-  "node_modules/.pnpm/@anthropic-ai+sdk@0.90.0/node_modules/@anthropic-ai/sdk/_vendor/partial-json-parser/parser.mjs"() {
+  "node_modules/@anthropic-ai/sdk/_vendor/partial-json-parser/parser.mjs"() {
     tokenize3 = (input) => {
       let current = 0;
       let tokens2 = [];
@@ -6193,14 +6199,14 @@ var init_parser = __esm({
   }
 });
 
-// node_modules/.pnpm/@anthropic-ai+sdk@0.90.0/node_modules/@anthropic-ai/sdk/streaming.mjs
+// node_modules/@anthropic-ai/sdk/streaming.mjs
 var init_streaming2 = __esm({
-  "node_modules/.pnpm/@anthropic-ai+sdk@0.90.0/node_modules/@anthropic-ai/sdk/streaming.mjs"() {
+  "node_modules/@anthropic-ai/sdk/streaming.mjs"() {
     init_streaming();
   }
 });
 
-// node_modules/.pnpm/@anthropic-ai+sdk@0.90.0/node_modules/@anthropic-ai/sdk/lib/BetaMessageStream.mjs
+// node_modules/@anthropic-ai/sdk/lib/BetaMessageStream.mjs
 function tracksToolInput(content) {
   return content.type === "tool_use" || content.type === "server_tool_use" || content.type === "mcp_tool_use";
 }
@@ -6208,7 +6214,7 @@ function checkNever(x) {
 }
 var _BetaMessageStream_instances, _BetaMessageStream_currentMessageSnapshot, _BetaMessageStream_params, _BetaMessageStream_connectedPromise, _BetaMessageStream_resolveConnectedPromise, _BetaMessageStream_rejectConnectedPromise, _BetaMessageStream_endPromise, _BetaMessageStream_resolveEndPromise, _BetaMessageStream_rejectEndPromise, _BetaMessageStream_listeners, _BetaMessageStream_ended, _BetaMessageStream_errored, _BetaMessageStream_aborted, _BetaMessageStream_catchingPromiseCreated, _BetaMessageStream_response, _BetaMessageStream_request_id, _BetaMessageStream_logger, _BetaMessageStream_getFinalMessage, _BetaMessageStream_getFinalText, _BetaMessageStream_handleError, _BetaMessageStream_beginRequest, _BetaMessageStream_addStreamEvent, _BetaMessageStream_endRequest, _BetaMessageStream_accumulateMessage, JSON_BUF_PROPERTY, BetaMessageStream;
 var init_BetaMessageStream = __esm({
-  "node_modules/.pnpm/@anthropic-ai+sdk@0.90.0/node_modules/@anthropic-ai/sdk/lib/BetaMessageStream.mjs"() {
+  "node_modules/@anthropic-ai/sdk/lib/BetaMessageStream.mjs"() {
     init_tslib();
     init_parser();
     init_error2();
@@ -6802,10 +6808,10 @@ var init_BetaMessageStream = __esm({
   }
 });
 
-// node_modules/.pnpm/@anthropic-ai+sdk@0.90.0/node_modules/@anthropic-ai/sdk/lib/tools/ToolError.mjs
+// node_modules/@anthropic-ai/sdk/lib/tools/ToolError.mjs
 var ToolError;
 var init_ToolError = __esm({
-  "node_modules/.pnpm/@anthropic-ai+sdk@0.90.0/node_modules/@anthropic-ai/sdk/lib/tools/ToolError.mjs"() {
+  "node_modules/@anthropic-ai/sdk/lib/tools/ToolError.mjs"() {
     ToolError = class extends Error {
       constructor(content) {
         const message = typeof content === "string" ? content : content.map((block) => {
@@ -6821,10 +6827,10 @@ var init_ToolError = __esm({
   }
 });
 
-// node_modules/.pnpm/@anthropic-ai+sdk@0.90.0/node_modules/@anthropic-ai/sdk/lib/tools/CompactionControl.mjs
+// node_modules/@anthropic-ai/sdk/lib/tools/CompactionControl.mjs
 var DEFAULT_TOKEN_THRESHOLD, DEFAULT_SUMMARY_PROMPT;
 var init_CompactionControl = __esm({
-  "node_modules/.pnpm/@anthropic-ai+sdk@0.90.0/node_modules/@anthropic-ai/sdk/lib/tools/CompactionControl.mjs"() {
+  "node_modules/@anthropic-ai/sdk/lib/tools/CompactionControl.mjs"() {
     DEFAULT_TOKEN_THRESHOLD = 1e5;
     DEFAULT_SUMMARY_PROMPT = `You have been working on the task described above but have not yet completed it. Write a continuation summary that will allow you (or another instance of yourself) to resume work efficiently in a future context window where the conversation history will be replaced with this summary. Your summary should be structured, concise, and actionable. Include:
 1. Task Overview
@@ -6852,7 +6858,7 @@ Wrap your summary in <summary></summary> tags.`;
   }
 });
 
-// node_modules/.pnpm/@anthropic-ai+sdk@0.90.0/node_modules/@anthropic-ai/sdk/lib/tools/BetaToolRunner.mjs
+// node_modules/@anthropic-ai/sdk/lib/tools/BetaToolRunner.mjs
 function promiseWithResolvers() {
   let resolve6;
   let reject;
@@ -6910,7 +6916,7 @@ async function generateToolResponse(params, lastMessage = params.messages.at(-1)
 }
 var _BetaToolRunner_instances, _BetaToolRunner_consumed, _BetaToolRunner_mutated, _BetaToolRunner_state, _BetaToolRunner_options, _BetaToolRunner_message, _BetaToolRunner_toolResponse, _BetaToolRunner_completion, _BetaToolRunner_iterationCount, _BetaToolRunner_checkAndCompact, _BetaToolRunner_generateToolResponse, BetaToolRunner;
 var init_BetaToolRunner = __esm({
-  "node_modules/.pnpm/@anthropic-ai+sdk@0.90.0/node_modules/@anthropic-ai/sdk/lib/tools/BetaToolRunner.mjs"() {
+  "node_modules/@anthropic-ai/sdk/lib/tools/BetaToolRunner.mjs"() {
     init_tslib();
     init_ToolError();
     init_error();
@@ -7204,10 +7210,10 @@ var init_BetaToolRunner = __esm({
   }
 });
 
-// node_modules/.pnpm/@anthropic-ai+sdk@0.90.0/node_modules/@anthropic-ai/sdk/internal/decoders/jsonl.mjs
+// node_modules/@anthropic-ai/sdk/internal/decoders/jsonl.mjs
 var JSONLDecoder;
 var init_jsonl = __esm({
-  "node_modules/.pnpm/@anthropic-ai+sdk@0.90.0/node_modules/@anthropic-ai/sdk/internal/decoders/jsonl.mjs"() {
+  "node_modules/@anthropic-ai/sdk/internal/decoders/jsonl.mjs"() {
     init_error();
     init_shims();
     init_line();
@@ -7244,10 +7250,10 @@ var init_jsonl = __esm({
   }
 });
 
-// node_modules/.pnpm/@anthropic-ai+sdk@0.90.0/node_modules/@anthropic-ai/sdk/resources/beta/messages/batches.mjs
+// node_modules/@anthropic-ai/sdk/resources/beta/messages/batches.mjs
 var Batches;
 var init_batches = __esm({
-  "node_modules/.pnpm/@anthropic-ai+sdk@0.90.0/node_modules/@anthropic-ai/sdk/resources/beta/messages/batches.mjs"() {
+  "node_modules/@anthropic-ai/sdk/resources/beta/messages/batches.mjs"() {
     init_resource();
     init_pagination();
     init_headers();
@@ -7447,7 +7453,7 @@ var init_batches = __esm({
   }
 });
 
-// node_modules/.pnpm/@anthropic-ai+sdk@0.90.0/node_modules/@anthropic-ai/sdk/resources/beta/messages/messages.mjs
+// node_modules/@anthropic-ai/sdk/resources/beta/messages/messages.mjs
 function transformOutputFormat(params) {
   if (!params.output_format) {
     return params;
@@ -7466,7 +7472,7 @@ function transformOutputFormat(params) {
 }
 var DEPRECATED_MODELS, MODELS_TO_WARN_WITH_THINKING_ENABLED, Messages;
 var init_messages = __esm({
-  "node_modules/.pnpm/@anthropic-ai+sdk@0.90.0/node_modules/@anthropic-ai/sdk/resources/beta/messages/messages.mjs"() {
+  "node_modules/@anthropic-ai/sdk/resources/beta/messages/messages.mjs"() {
     init_error2();
     init_resource();
     init_constants();
@@ -7599,10 +7605,10 @@ Please migrate to a newer model. Visit https://docs.anthropic.com/en/docs/resour
   }
 });
 
-// node_modules/.pnpm/@anthropic-ai+sdk@0.90.0/node_modules/@anthropic-ai/sdk/resources/beta/sessions/events.mjs
+// node_modules/@anthropic-ai/sdk/resources/beta/sessions/events.mjs
 var Events;
 var init_events = __esm({
-  "node_modules/.pnpm/@anthropic-ai+sdk@0.90.0/node_modules/@anthropic-ai/sdk/resources/beta/sessions/events.mjs"() {
+  "node_modules/@anthropic-ai/sdk/resources/beta/sessions/events.mjs"() {
     init_resource();
     init_pagination();
     init_headers();
@@ -7693,10 +7699,10 @@ var init_events = __esm({
   }
 });
 
-// node_modules/.pnpm/@anthropic-ai+sdk@0.90.0/node_modules/@anthropic-ai/sdk/resources/beta/sessions/resources.mjs
+// node_modules/@anthropic-ai/sdk/resources/beta/sessions/resources.mjs
 var Resources;
 var init_resources = __esm({
-  "node_modules/.pnpm/@anthropic-ai+sdk@0.90.0/node_modules/@anthropic-ai/sdk/resources/beta/sessions/resources.mjs"() {
+  "node_modules/@anthropic-ai/sdk/resources/beta/sessions/resources.mjs"() {
     init_resource();
     init_pagination();
     init_headers();
@@ -7826,10 +7832,10 @@ var init_resources = __esm({
   }
 });
 
-// node_modules/.pnpm/@anthropic-ai+sdk@0.90.0/node_modules/@anthropic-ai/sdk/resources/beta/sessions/sessions.mjs
+// node_modules/@anthropic-ai/sdk/resources/beta/sessions/sessions.mjs
 var Sessions;
 var init_sessions = __esm({
-  "node_modules/.pnpm/@anthropic-ai+sdk@0.90.0/node_modules/@anthropic-ai/sdk/resources/beta/sessions/sessions.mjs"() {
+  "node_modules/@anthropic-ai/sdk/resources/beta/sessions/sessions.mjs"() {
     init_resource();
     init_events();
     init_events();
@@ -7980,10 +7986,10 @@ var init_sessions = __esm({
   }
 });
 
-// node_modules/.pnpm/@anthropic-ai+sdk@0.90.0/node_modules/@anthropic-ai/sdk/resources/beta/skills/versions.mjs
+// node_modules/@anthropic-ai/sdk/resources/beta/skills/versions.mjs
 var Versions2;
 var init_versions2 = __esm({
-  "node_modules/.pnpm/@anthropic-ai+sdk@0.90.0/node_modules/@anthropic-ai/sdk/resources/beta/skills/versions.mjs"() {
+  "node_modules/@anthropic-ai/sdk/resources/beta/skills/versions.mjs"() {
     init_resource();
     init_pagination();
     init_headers();
@@ -8081,10 +8087,10 @@ var init_versions2 = __esm({
   }
 });
 
-// node_modules/.pnpm/@anthropic-ai+sdk@0.90.0/node_modules/@anthropic-ai/sdk/resources/beta/skills/skills.mjs
+// node_modules/@anthropic-ai/sdk/resources/beta/skills/skills.mjs
 var Skills;
 var init_skills = __esm({
-  "node_modules/.pnpm/@anthropic-ai+sdk@0.90.0/node_modules/@anthropic-ai/sdk/resources/beta/skills/skills.mjs"() {
+  "node_modules/@anthropic-ai/sdk/resources/beta/skills/skills.mjs"() {
     init_resource();
     init_versions2();
     init_versions2();
@@ -8179,10 +8185,10 @@ var init_skills = __esm({
   }
 });
 
-// node_modules/.pnpm/@anthropic-ai+sdk@0.90.0/node_modules/@anthropic-ai/sdk/resources/beta/vaults/credentials.mjs
+// node_modules/@anthropic-ai/sdk/resources/beta/vaults/credentials.mjs
 var Credentials;
 var init_credentials = __esm({
-  "node_modules/.pnpm/@anthropic-ai+sdk@0.90.0/node_modules/@anthropic-ai/sdk/resources/beta/vaults/credentials.mjs"() {
+  "node_modules/@anthropic-ai/sdk/resources/beta/vaults/credentials.mjs"() {
     init_resource();
     init_pagination();
     init_headers();
@@ -8335,10 +8341,10 @@ var init_credentials = __esm({
   }
 });
 
-// node_modules/.pnpm/@anthropic-ai+sdk@0.90.0/node_modules/@anthropic-ai/sdk/resources/beta/vaults/vaults.mjs
+// node_modules/@anthropic-ai/sdk/resources/beta/vaults/vaults.mjs
 var Vaults;
 var init_vaults = __esm({
-  "node_modules/.pnpm/@anthropic-ai+sdk@0.90.0/node_modules/@anthropic-ai/sdk/resources/beta/vaults/vaults.mjs"() {
+  "node_modules/@anthropic-ai/sdk/resources/beta/vaults/vaults.mjs"() {
     init_resource();
     init_credentials();
     init_credentials();
@@ -8484,10 +8490,10 @@ var init_vaults = __esm({
   }
 });
 
-// node_modules/.pnpm/@anthropic-ai+sdk@0.90.0/node_modules/@anthropic-ai/sdk/resources/beta/beta.mjs
+// node_modules/@anthropic-ai/sdk/resources/beta/beta.mjs
 var Beta;
 var init_beta = __esm({
-  "node_modules/.pnpm/@anthropic-ai+sdk@0.90.0/node_modules/@anthropic-ai/sdk/resources/beta/beta.mjs"() {
+  "node_modules/@anthropic-ai/sdk/resources/beta/beta.mjs"() {
     init_resource();
     init_environments();
     init_environments();
@@ -8533,10 +8539,10 @@ var init_beta = __esm({
   }
 });
 
-// node_modules/.pnpm/@anthropic-ai+sdk@0.90.0/node_modules/@anthropic-ai/sdk/resources/completions.mjs
+// node_modules/@anthropic-ai/sdk/resources/completions.mjs
 var Completions;
 var init_completions = __esm({
-  "node_modules/.pnpm/@anthropic-ai+sdk@0.90.0/node_modules/@anthropic-ai/sdk/resources/completions.mjs"() {
+  "node_modules/@anthropic-ai/sdk/resources/completions.mjs"() {
     init_resource();
     init_headers();
     Completions = class extends APIResource {
@@ -8557,7 +8563,7 @@ var init_completions = __esm({
   }
 });
 
-// node_modules/.pnpm/@anthropic-ai+sdk@0.90.0/node_modules/@anthropic-ai/sdk/lib/parser.mjs
+// node_modules/@anthropic-ai/sdk/lib/parser.mjs
 function getOutputFormat2(params) {
   return params?.output_config?.format;
 }
@@ -8618,12 +8624,12 @@ function parseOutputFormat(params, content) {
   }
 }
 var init_parser2 = __esm({
-  "node_modules/.pnpm/@anthropic-ai+sdk@0.90.0/node_modules/@anthropic-ai/sdk/lib/parser.mjs"() {
+  "node_modules/@anthropic-ai/sdk/lib/parser.mjs"() {
     init_error();
   }
 });
 
-// node_modules/.pnpm/@anthropic-ai+sdk@0.90.0/node_modules/@anthropic-ai/sdk/lib/MessageStream.mjs
+// node_modules/@anthropic-ai/sdk/lib/MessageStream.mjs
 function tracksToolInput2(content) {
   return content.type === "tool_use" || content.type === "server_tool_use";
 }
@@ -8631,7 +8637,7 @@ function checkNever2(x) {
 }
 var _MessageStream_instances, _MessageStream_currentMessageSnapshot, _MessageStream_params, _MessageStream_connectedPromise, _MessageStream_resolveConnectedPromise, _MessageStream_rejectConnectedPromise, _MessageStream_endPromise, _MessageStream_resolveEndPromise, _MessageStream_rejectEndPromise, _MessageStream_listeners, _MessageStream_ended, _MessageStream_errored, _MessageStream_aborted, _MessageStream_catchingPromiseCreated, _MessageStream_response, _MessageStream_request_id, _MessageStream_logger, _MessageStream_getFinalMessage, _MessageStream_getFinalText, _MessageStream_handleError, _MessageStream_beginRequest, _MessageStream_addStreamEvent, _MessageStream_endRequest, _MessageStream_accumulateMessage, JSON_BUF_PROPERTY2, MessageStream;
 var init_MessageStream = __esm({
-  "node_modules/.pnpm/@anthropic-ai+sdk@0.90.0/node_modules/@anthropic-ai/sdk/lib/MessageStream.mjs"() {
+  "node_modules/@anthropic-ai/sdk/lib/MessageStream.mjs"() {
     init_tslib();
     init_errors();
     init_error2();
@@ -9200,10 +9206,10 @@ var init_MessageStream = __esm({
   }
 });
 
-// node_modules/.pnpm/@anthropic-ai+sdk@0.90.0/node_modules/@anthropic-ai/sdk/resources/messages/batches.mjs
+// node_modules/@anthropic-ai/sdk/resources/messages/batches.mjs
 var Batches2;
 var init_batches2 = __esm({
-  "node_modules/.pnpm/@anthropic-ai+sdk@0.90.0/node_modules/@anthropic-ai/sdk/resources/messages/batches.mjs"() {
+  "node_modules/@anthropic-ai/sdk/resources/messages/batches.mjs"() {
     init_resource();
     init_pagination();
     init_headers();
@@ -9352,10 +9358,10 @@ var init_batches2 = __esm({
   }
 });
 
-// node_modules/.pnpm/@anthropic-ai+sdk@0.90.0/node_modules/@anthropic-ai/sdk/resources/messages/messages.mjs
+// node_modules/@anthropic-ai/sdk/resources/messages/messages.mjs
 var Messages2, DEPRECATED_MODELS2, MODELS_TO_WARN_WITH_THINKING_ENABLED2;
 var init_messages2 = __esm({
-  "node_modules/.pnpm/@anthropic-ai+sdk@0.90.0/node_modules/@anthropic-ai/sdk/resources/messages/messages.mjs"() {
+  "node_modules/@anthropic-ai/sdk/resources/messages/messages.mjs"() {
     init_resource();
     init_headers();
     init_stainless_helper_header();
@@ -9482,10 +9488,10 @@ Please migrate to a newer model. Visit https://docs.anthropic.com/en/docs/resour
   }
 });
 
-// node_modules/.pnpm/@anthropic-ai+sdk@0.90.0/node_modules/@anthropic-ai/sdk/resources/models.mjs
+// node_modules/@anthropic-ai/sdk/resources/models.mjs
 var Models2;
 var init_models2 = __esm({
-  "node_modules/.pnpm/@anthropic-ai+sdk@0.90.0/node_modules/@anthropic-ai/sdk/resources/models.mjs"() {
+  "node_modules/@anthropic-ai/sdk/resources/models.mjs"() {
     init_resource();
     init_pagination();
     init_headers();
@@ -9528,9 +9534,9 @@ var init_models2 = __esm({
   }
 });
 
-// node_modules/.pnpm/@anthropic-ai+sdk@0.90.0/node_modules/@anthropic-ai/sdk/resources/index.mjs
+// node_modules/@anthropic-ai/sdk/resources/index.mjs
 var init_resources2 = __esm({
-  "node_modules/.pnpm/@anthropic-ai+sdk@0.90.0/node_modules/@anthropic-ai/sdk/resources/index.mjs"() {
+  "node_modules/@anthropic-ai/sdk/resources/index.mjs"() {
     init_shared();
     init_beta();
     init_completions();
@@ -9539,10 +9545,10 @@ var init_resources2 = __esm({
   }
 });
 
-// node_modules/.pnpm/@anthropic-ai+sdk@0.90.0/node_modules/@anthropic-ai/sdk/internal/utils/env.mjs
+// node_modules/@anthropic-ai/sdk/internal/utils/env.mjs
 var readEnv;
 var init_env = __esm({
-  "node_modules/.pnpm/@anthropic-ai+sdk@0.90.0/node_modules/@anthropic-ai/sdk/internal/utils/env.mjs"() {
+  "node_modules/@anthropic-ai/sdk/internal/utils/env.mjs"() {
     readEnv = (env) => {
       if (typeof globalThis.process !== "undefined") {
         return globalThis.process.env?.[env]?.trim() || void 0;
@@ -9555,10 +9561,10 @@ var init_env = __esm({
   }
 });
 
-// node_modules/.pnpm/@anthropic-ai+sdk@0.90.0/node_modules/@anthropic-ai/sdk/client.mjs
+// node_modules/@anthropic-ai/sdk/client.mjs
 var _BaseAnthropic_instances, _a, _BaseAnthropic_encoder, _BaseAnthropic_baseURLOverridden, HUMAN_PROMPT, AI_PROMPT, BaseAnthropic, Anthropic;
 var init_client = __esm({
-  "node_modules/.pnpm/@anthropic-ai+sdk@0.90.0/node_modules/@anthropic-ai/sdk/client.mjs"() {
+  "node_modules/@anthropic-ai/sdk/client.mjs"() {
     init_tslib();
     init_uuid();
     init_values();
@@ -10051,9 +10057,9 @@ var init_client = __esm({
   }
 });
 
-// node_modules/.pnpm/@anthropic-ai+sdk@0.90.0/node_modules/@anthropic-ai/sdk/index.mjs
+// node_modules/@anthropic-ai/sdk/index.mjs
 var init_sdk = __esm({
-  "node_modules/.pnpm/@anthropic-ai+sdk@0.90.0/node_modules/@anthropic-ai/sdk/index.mjs"() {
+  "node_modules/@anthropic-ai/sdk/index.mjs"() {
     init_client();
     init_uploads2();
     init_api_promise();
@@ -12353,7 +12359,7 @@ function createRaycastApiShim(session2) {
       };
     }
     async authorize() {
-      throw new Error("Interactive OAuth authorization is not yet available in Raymes");
+      throw new Error("Interactive OAuth authorization is not yet available in Tezbar");
     }
   }
   const ListItemDetailMetadata = Object.assign(makeToken("List.Item.Detail.Metadata"), {
@@ -12766,9 +12772,9 @@ function createRaycastApiShim(session2) {
         });
         const name = stdout.trim();
         if (name) return { name, path: `/Applications/${name}.app` };
-        return { name: "Raymes", path: process.execPath };
+        return { name: "Tezbar", path: process.execPath };
       } catch {
-        return { name: "Raymes", path: process.execPath };
+        return { name: "Tezbar", path: process.execPath };
       }
     },
     getDefaultApplication: async () => {
@@ -15102,17 +15108,13 @@ var import_node_path4 = require("node:path");
 var import_node_fs4 = require("node:fs");
 var import_node_os4 = require("node:os");
 
-// node_modules/.pnpm/fuse.js@7.3.0/node_modules/fuse.js/dist/fuse.mjs
+// node_modules/fuse.js/dist/fuse.mjs
 function isArray(value) {
   return !Array.isArray ? getTag(value) === "[object Array]" : Array.isArray(value);
 }
 function baseToString(value) {
-  if (typeof value == "string") {
-    return value;
-  }
-  if (typeof value === "bigint") {
-    return value.toString();
-  }
+  if (typeof value == "string") return value;
+  if (typeof value === "bigint") return value.toString();
   const result = value + "";
   return result == "0" && 1 / value == -Infinity ? "-0" : result;
 }
@@ -15144,10 +15146,12 @@ function getTag(value) {
   return value == null ? value === void 0 ? "[object Undefined]" : "[object Null]" : Object.prototype.toString.call(value);
 }
 var INCORRECT_INDEX_TYPE = "Incorrect 'index' type";
+var INVALID_DOC_INDEX = "Invalid doc index: must be a non-negative integer within the bounds of the docs array";
 var LOGICAL_SEARCH_INVALID_QUERY_FOR_KEY = (key) => `Invalid value for key ${key}`;
 var PATTERN_LENGTH_TOO_LARGE = (max) => `Pattern length exceeds max of ${max}.`;
 var MISSING_KEY_PROPERTY = (name) => `Missing ${name} property in key`;
 var INVALID_KEY_WEIGHT_VALUE = (key) => `Property 'weight' in key '${key}' must be a positive integer`;
+var FUSE_MATCH_TOKEN_SEARCH_UNSUPPORTED = "Fuse.match does not support useTokenSearch: token search requires corpus-level statistics (df, fieldCount) that a one-off string comparison does not have. Use new Fuse(...).search(...) instead.";
 var hasOwn = Object.prototype.hasOwnProperty;
 var KeyStore = class {
   constructor(keys) {
@@ -15185,20 +15189,16 @@ function createKey(key) {
     path7 = createKeyPath(key);
     id = createKeyId(key);
   } else {
-    if (!hasOwn.call(key, "name")) {
-      throw new Error(MISSING_KEY_PROPERTY("name"));
-    }
+    if (!hasOwn.call(key, "name")) throw new Error(MISSING_KEY_PROPERTY("name"));
     const name = key.name;
     src = name;
-    if (hasOwn.call(key, "weight")) {
+    if (hasOwn.call(key, "weight") && key.weight !== void 0) {
       weight = key.weight;
-      if (weight <= 0) {
-        throw new Error(INVALID_KEY_WEIGHT_VALUE(name));
-      }
+      if (weight <= 0) throw new Error(INVALID_KEY_WEIGHT_VALUE(createKeyId(name)));
     }
     path7 = createKeyPath(name);
     id = createKeyId(name);
-    getFn = key.getFn;
+    getFn = key.getFn ?? null;
   }
   return {
     path: path7,
@@ -15218,33 +15218,22 @@ function get(obj, path7) {
   const list = [];
   let arr = false;
   const deepGet = (obj2, path8, index, arrayIndex) => {
-    if (!isDefined(obj2)) {
-      return;
-    }
-    if (!path8[index]) {
-      list.push(arrayIndex !== void 0 ? {
-        v: obj2,
+    if (!isDefined(obj2)) return;
+    if (!path8[index]) list.push(arrayIndex !== void 0 ? {
+      v: obj2,
+      i: arrayIndex
+    } : obj2);
+    else {
+      const value = obj2[path8[index]];
+      if (!isDefined(value)) return;
+      if (index === path8.length - 1 && (isString(value) || isNumber(value) || isBoolean(value) || typeof value === "bigint")) list.push(arrayIndex !== void 0 ? {
+        v: toString(value),
         i: arrayIndex
-      } : obj2);
-    } else {
-      const key = path8[index];
-      const value = obj2[key];
-      if (!isDefined(value)) {
-        return;
-      }
-      if (index === path8.length - 1 && (isString(value) || isNumber(value) || isBoolean(value) || typeof value === "bigint")) {
-        list.push(arrayIndex !== void 0 ? {
-          v: toString(value),
-          i: arrayIndex
-        } : toString(value));
-      } else if (isArray(value)) {
+      } : toString(value));
+      else if (isArray(value)) {
         arr = true;
-        for (let i = 0, len = value.length; i < len; i += 1) {
-          deepGet(value[i], path8, index + 1, i);
-        }
-      } else if (path8.length) {
-        deepGet(value, path8, index + 1, arrayIndex);
-      }
+        for (let i = 0, len = value.length; i < len; i += 1) deepGet(value[i], path8, index + 1, i);
+      } else if (path8.length) deepGet(value, path8, index + 1, arrayIndex);
     }
   };
   deepGet(obj, isString(path7) ? path7.split(".") : path7, 0);
@@ -15271,6 +15260,8 @@ var FuzzyOptions = {
 var AdvancedOptions = {
   useExtendedSearch: false,
   useTokenSearch: false,
+  tokenize: void 0,
+  tokenMatch: "any",
   getFn: get,
   ignoreLocation: false,
   ignoreFieldNorm: false,
@@ -15282,18 +15273,25 @@ var Config = Object.freeze({
   ...FuzzyOptions,
   ...AdvancedOptions
 });
-var SPACE = /[^ ]+/g;
+function isWordSeparator(code) {
+  return code >= 9 && code <= 13 || code === 32 || code === 160;
+}
 function norm(weight = 1, mantissa = 3) {
   const cache2 = /* @__PURE__ */ new Map();
   const m = Math.pow(10, mantissa);
   return {
     get(value) {
-      const numTokens = value.match(SPACE).length;
-      if (cache2.has(numTokens)) {
-        return cache2.get(numTokens);
-      }
-      const norm2 = 1 / Math.pow(numTokens, 0.5 * weight);
-      const n = parseFloat(Math.round(norm2 * m) / m);
+      let numTokens = 0;
+      let inWord = false;
+      for (let i = 0; i < value.length; i++) if (!isWordSeparator(value.charCodeAt(i))) {
+        if (!inWord) {
+          numTokens++;
+          inWord = true;
+        }
+      } else inWord = false;
+      if (numTokens === 0) numTokens = 1;
+      if (cache2.has(numTokens)) return cache2.get(numTokens);
+      const n = Math.round(m / Math.pow(numTokens, 0.5 * weight)) / m;
       cache2.set(numTokens, n);
       return n;
     },
@@ -15303,10 +15301,7 @@ function norm(weight = 1, mantissa = 3) {
   };
 }
 var FuseIndex = class {
-  constructor({
-    getFn = Config.getFn,
-    fieldNormWeight = Config.fieldNormWeight
-  } = {}) {
+  constructor({ getFn = Config.getFn, fieldNormWeight = Config.fieldNormWeight } = {}) {
     this.norm = norm(fieldNormWeight, 3);
     this.getFn = getFn;
     this.isCreated = false;
@@ -15329,44 +15324,53 @@ var FuseIndex = class {
     });
   }
   create() {
-    if (this.isCreated || !this.docs.length) {
-      return;
-    }
+    if (this.isCreated || !this.docs.length) return;
     this.isCreated = true;
-    if (isString(this.docs[0])) {
-      this.docs.forEach((doc, docIndex) => {
-        this._addString(doc, docIndex);
-      });
-    } else {
-      this.docs.forEach((doc, docIndex) => {
-        this._addObject(doc, docIndex);
-      });
+    const len = this.docs.length;
+    this.records = new Array(len);
+    let recordCount = 0;
+    if (isString(this.docs[0])) for (let i = 0; i < len; i++) {
+      const record3 = this._createStringRecord(this.docs[i], i);
+      if (record3) this.records[recordCount++] = record3;
     }
+    else for (let i = 0; i < len; i++) this.records[recordCount++] = this._createObjectRecord(this.docs[i], i);
+    this.records.length = recordCount;
     this.norm.clear();
   }
-  // Adds a doc to the end of the index
-  add(doc) {
-    const idx = this.size();
+  add(doc, docIndex) {
+    if (!Number.isInteger(docIndex) || docIndex < 0) throw new Error(INVALID_DOC_INDEX);
     if (isString(doc)) {
-      this._addString(doc, idx);
-    } else {
-      this._addObject(doc, idx);
+      const record4 = this._createStringRecord(doc, docIndex);
+      if (record4) this.records.push(record4);
+      return record4;
     }
+    const record3 = this._createObjectRecord(doc, docIndex);
+    this.records.push(record3);
+    return record3;
   }
-  // Removes the doc at the specified index of the index
   removeAt(idx) {
-    this.records.splice(idx, 1);
-    for (let i = idx, len = this.size(); i < len; i += 1) {
-      this.records[i].i -= 1;
+    if (!Number.isInteger(idx) || idx < 0) throw new Error(INVALID_DOC_INDEX);
+    for (let i = 0, len = this.records.length; i < len; i += 1) if (this.records[i].i === idx) {
+      this.records.splice(i, 1);
+      break;
     }
+    for (let i = 0, len = this.records.length; i < len; i += 1) if (this.records[i].i > idx) this.records[i].i -= 1;
   }
-  // Removes docs at the specified indices (must be sorted ascending)
   removeAll(indices) {
-    for (let i = indices.length - 1; i >= 0; i -= 1) {
-      this.records.splice(indices[i], 1);
-    }
-    for (let i = 0, len = this.records.length; i < len; i += 1) {
-      this.records[i].i = i;
+    const toRemove = /* @__PURE__ */ new Set();
+    for (const v of indices) if (Number.isInteger(v) && v >= 0) toRemove.add(v);
+    if (toRemove.size === 0) return;
+    this.records = this.records.filter((r) => !toRemove.has(r.i));
+    const sorted = Array.from(toRemove).sort((a, b) => a - b);
+    for (const record3 of this.records) {
+      let lo = 0;
+      let hi = sorted.length;
+      while (lo < hi) {
+        const mid = lo + hi >>> 1;
+        if (sorted[mid] < record3.i) lo = mid + 1;
+        else hi = mid;
+      }
+      record3.i -= lo;
     }
   }
   getValueForItemAtKeyId(item, keyId) {
@@ -15375,34 +15379,28 @@ var FuseIndex = class {
   size() {
     return this.records.length;
   }
-  _addString(doc, docIndex) {
-    if (!isDefined(doc) || isBlank(doc)) {
-      return;
-    }
-    const record3 = {
+  _createStringRecord(doc, docIndex) {
+    if (!isDefined(doc) || isBlank(doc)) return null;
+    return {
       v: doc,
       i: docIndex,
       n: this.norm.get(doc)
     };
-    this.records.push(record3);
   }
-  _addObject(doc, docIndex) {
+  _createObjectRecord(doc, docIndex) {
     const record3 = {
       i: docIndex,
       $: {}
     };
-    this.keys.forEach((key, keyIndex) => {
+    for (let keyIndex = 0, keyLen = this.keys.length; keyIndex < keyLen; keyIndex++) {
+      const key = this.keys[keyIndex];
       const value = key.getFn ? key.getFn(doc) : this.getFn(doc, key.path);
-      if (!isDefined(value)) {
-        return;
-      }
+      if (!isDefined(value)) continue;
       if (isArray(value)) {
         const subRecords = [];
         for (let i = 0, len = value.length; i < len; i += 1) {
           const item = value[i];
-          if (!isDefined(item)) {
-            continue;
-          }
+          if (!isDefined(item)) continue;
           if (isString(item)) {
             if (!isBlank(item)) {
               const subRecord = {
@@ -15432,24 +15430,17 @@ var FuseIndex = class {
         };
         record3.$[keyIndex] = subRecord;
       }
-    });
-    this.records.push(record3);
+    }
+    return record3;
   }
   toJSON() {
     return {
-      // eslint-disable-next-line @typescript-eslint/no-unused-vars
-      keys: this.keys.map(({
-        getFn,
-        ...key
-      }) => key),
+      keys: this.keys.map(({ getFn, ...key }) => key),
       records: this.records
     };
   }
 };
-function createIndex(keys, docs, {
-  getFn = Config.getFn,
-  fieldNormWeight = Config.fieldNormWeight
-} = {}) {
+function createIndex(keys, docs, { getFn = Config.getFn, fieldNormWeight = Config.fieldNormWeight } = {}) {
   const myIndex = new FuseIndex({
     getFn,
     fieldNormWeight
@@ -15459,14 +15450,8 @@ function createIndex(keys, docs, {
   myIndex.create();
   return myIndex;
 }
-function parseIndex(data, {
-  getFn = Config.getFn,
-  fieldNormWeight = Config.fieldNormWeight
-} = {}) {
-  const {
-    keys,
-    records
-  } = data;
+function parseIndex(data, { getFn = Config.getFn, fieldNormWeight = Config.fieldNormWeight } = {}) {
+  const { keys, records } = data;
   const myIndex = new FuseIndex({
     getFn,
     fieldNormWeight
@@ -15482,34 +15467,18 @@ function convertMaskToIndices(matchmask = [], minMatchCharLength = Config.minMat
   let i = 0;
   for (let len = matchmask.length; i < len; i += 1) {
     const match = matchmask[i];
-    if (match && start === -1) {
-      start = i;
-    } else if (!match && start !== -1) {
+    if (match && start === -1) start = i;
+    else if (!match && start !== -1) {
       end = i - 1;
-      if (end - start + 1 >= minMatchCharLength) {
-        indices.push([start, end]);
-      }
+      if (end - start + 1 >= minMatchCharLength) indices.push([start, end]);
       start = -1;
     }
   }
-  if (matchmask[i - 1] && i - start >= minMatchCharLength) {
-    indices.push([start, i - 1]);
-  }
+  if (matchmask[i - 1] && i - start >= minMatchCharLength) indices.push([start, i - 1]);
   return indices;
 }
-var MAX_BITS = 32;
-function search(text3, pattern, patternAlphabet, {
-  location = Config.location,
-  distance = Config.distance,
-  threshold = Config.threshold,
-  findAllMatches = Config.findAllMatches,
-  minMatchCharLength = Config.minMatchCharLength,
-  includeMatches = Config.includeMatches,
-  ignoreLocation = Config.ignoreLocation
-} = {}) {
-  if (pattern.length > MAX_BITS) {
-    throw new Error(PATTERN_LENGTH_TOO_LARGE(MAX_BITS));
-  }
+function search(text3, pattern, patternAlphabet, { location = Config.location, distance = Config.distance, threshold = Config.threshold, findAllMatches = Config.findAllMatches, minMatchCharLength = Config.minMatchCharLength, includeMatches = Config.includeMatches, ignoreLocation = Config.ignoreLocation } = {}) {
+  if (pattern.length > 32) throw new Error(PATTERN_LENGTH_TOO_LARGE(32));
   const patternLen = pattern.length;
   const textLen = text3.length;
   const expectedLocation = Math.max(0, Math.min(location, textLen));
@@ -15540,18 +15509,15 @@ function search(text3, pattern, patternAlphabet, {
   bestLocation = -1;
   let lastBitArr = [];
   let finalScore = 1;
+  let bestErrors = 0;
   let binMax = patternLen + textLen;
   const mask = 1 << patternLen - 1;
   for (let i = 0; i < patternLen; i += 1) {
     let binMin = 0;
     let binMid = binMax;
     while (binMin < binMid) {
-      const score2 = calcScore(i, expectedLocation + binMid);
-      if (score2 <= currentThreshold) {
-        binMin = binMid;
-      } else {
-        binMax = binMid;
-      }
+      if (calcScore(i, expectedLocation + binMid) <= currentThreshold) binMin = binMid;
+      else binMax = binMid;
       binMid = Math.floor((binMax - binMin) / 2 + binMin);
     }
     binMax = binMid;
@@ -15562,43 +15528,34 @@ function search(text3, pattern, patternAlphabet, {
     for (let j = finish; j >= start; j -= 1) {
       const currentLocation = j - 1;
       const charMatch = patternAlphabet[text3[currentLocation]];
-      if (computeMatches) {
-        matchMask[currentLocation] = +!!charMatch;
-      }
       bitArr[j] = (bitArr[j + 1] << 1 | 1) & charMatch;
-      if (i) {
-        bitArr[j] |= (lastBitArr[j + 1] | lastBitArr[j]) << 1 | 1 | lastBitArr[j + 1];
-      }
+      if (i) bitArr[j] |= (lastBitArr[j + 1] | lastBitArr[j]) << 1 | 1 | lastBitArr[j + 1];
       if (bitArr[j] & mask) {
         finalScore = calcScore(i, currentLocation);
         if (finalScore <= currentThreshold) {
           currentThreshold = finalScore;
           bestLocation = currentLocation;
-          if (bestLocation <= expectedLocation) {
-            break;
-          }
+          bestErrors = i;
+          if (bestLocation <= expectedLocation) break;
           start = Math.max(1, 2 * expectedLocation - bestLocation);
         }
       }
     }
-    const score = calcScore(i + 1, expectedLocation);
-    if (score > currentThreshold) {
-      break;
-    }
+    if (calcScore(i + 1, expectedLocation) > currentThreshold) break;
     lastBitArr = bitArr;
+  }
+  if (computeMatches && bestLocation >= 0) {
+    const matchEnd = Math.min(textLen - 1, bestLocation + patternLen - 1 + bestErrors);
+    for (let k = bestLocation; k <= matchEnd; k += 1) if (patternAlphabet[text3[k]]) matchMask[k] = 1;
   }
   const result = {
     isMatch: bestLocation >= 0,
-    // Count exact matches (those with a score of 0) to be "almost" exact
     score: Math.max(1e-3, finalScore)
   };
   if (computeMatches) {
     const indices = convertMaskToIndices(matchMask, minMatchCharLength);
-    if (!indices.length) {
-      result.isMatch = false;
-    } else if (includeMatches) {
-      result.indices = indices;
-    }
+    if (!indices.length) result.isMatch = false;
+    else if (includeMatches) result.indices = indices;
   }
   return result;
 }
@@ -15617,54 +15574,29 @@ function mergeIndices(indices) {
   for (let i = 1, len = indices.length; i < len; i += 1) {
     const last = merged[merged.length - 1];
     const curr = indices[i];
-    if (curr[0] <= last[1] + 1) {
-      last[1] = Math.max(last[1], curr[1]);
-    } else {
-      merged.push(curr);
-    }
+    if (curr[0] <= last[1] + 1) last[1] = Math.max(last[1], curr[1]);
+    else merged.push(curr);
   }
   return merged;
 }
 var NON_DECOMPOSABLE_MAP = {
   "\u0142": "l",
-  // ł
   "\u0141": "L",
-  // Ł
   "\u0111": "d",
-  // đ
   "\u0110": "D",
-  // Đ
   "\xF8": "o",
-  // ø
   "\xD8": "O",
-  // Ø
   "\u0127": "h",
-  // ħ
   "\u0126": "H",
-  // Ħ
   "\u0167": "t",
-  // ŧ
   "\u0166": "T",
-  // Ŧ
   "\u0131": "i",
-  // ı
   "\xDF": "ss"
-  // ß
 };
 var NON_DECOMPOSABLE_RE = new RegExp("[" + Object.keys(NON_DECOMPOSABLE_MAP).join("") + "]", "g");
-var stripDiacritics = String.prototype.normalize ? (str2) => str2.normalize("NFD").replace(/[\u0300-\u036F\u0483-\u0489\u0591-\u05BD\u05BF\u05C1\u05C2\u05C4\u05C5\u05C7\u0610-\u061A\u064B-\u065F\u0670\u06D6-\u06DC\u06DF-\u06E4\u06E7\u06E8\u06EA-\u06ED\u0711\u0730-\u074A\u07A6-\u07B0\u07EB-\u07F3\u07FD\u0816-\u0819\u081B-\u0823\u0825-\u0827\u0829-\u082D\u0859-\u085B\u08D3-\u08E1\u08E3-\u0903\u093A-\u093C\u093E-\u094F\u0951-\u0957\u0962\u0963\u0981-\u0983\u09BC\u09BE-\u09C4\u09C7\u09C8\u09CB-\u09CD\u09D7\u09E2\u09E3\u09FE\u0A01-\u0A03\u0A3C\u0A3E-\u0A42\u0A47\u0A48\u0A4B-\u0A4D\u0A51\u0A70\u0A71\u0A75\u0A81-\u0A83\u0ABC\u0ABE-\u0AC5\u0AC7-\u0AC9\u0ACB-\u0ACD\u0AE2\u0AE3\u0AFA-\u0AFF\u0B01-\u0B03\u0B3C\u0B3E-\u0B44\u0B47\u0B48\u0B4B-\u0B4D\u0B56\u0B57\u0B62\u0B63\u0B82\u0BBE-\u0BC2\u0BC6-\u0BC8\u0BCA-\u0BCD\u0BD7\u0C00-\u0C04\u0C3E-\u0C44\u0C46-\u0C48\u0C4A-\u0C4D\u0C55\u0C56\u0C62\u0C63\u0C81-\u0C83\u0CBC\u0CBE-\u0CC4\u0CC6-\u0CC8\u0CCA-\u0CCD\u0CD5\u0CD6\u0CE2\u0CE3\u0D00-\u0D03\u0D3B\u0D3C\u0D3E-\u0D44\u0D46-\u0D48\u0D4A-\u0D4D\u0D57\u0D62\u0D63\u0D82\u0D83\u0DCA\u0DCF-\u0DD4\u0DD6\u0DD8-\u0DDF\u0DF2\u0DF3\u0E31\u0E34-\u0E3A\u0E47-\u0E4E\u0EB1\u0EB4-\u0EB9\u0EBB\u0EBC\u0EC8-\u0ECD\u0F18\u0F19\u0F35\u0F37\u0F39\u0F3E\u0F3F\u0F71-\u0F84\u0F86\u0F87\u0F8D-\u0F97\u0F99-\u0FBC\u0FC6\u102B-\u103E\u1056-\u1059\u105E-\u1060\u1062-\u1064\u1067-\u106D\u1071-\u1074\u1082-\u108D\u108F\u109A-\u109D\u135D-\u135F\u1712-\u1714\u1732-\u1734\u1752\u1753\u1772\u1773\u17B4-\u17D3\u17DD\u180B-\u180D\u1885\u1886\u18A9\u1920-\u192B\u1930-\u193B\u1A17-\u1A1B\u1A55-\u1A5E\u1A60-\u1A7C\u1A7F\u1AB0-\u1ABE\u1B00-\u1B04\u1B34-\u1B44\u1B6B-\u1B73\u1B80-\u1B82\u1BA1-\u1BAD\u1BE6-\u1BF3\u1C24-\u1C37\u1CD0-\u1CD2\u1CD4-\u1CE8\u1CED\u1CF2-\u1CF4\u1CF7-\u1CF9\u1DC0-\u1DF9\u1DFB-\u1DFF\u20D0-\u20F0\u2CEF-\u2CF1\u2D7F\u2DE0-\u2DFF\u302A-\u302F\u3099\u309A\uA66F-\uA672\uA674-\uA67D\uA69E\uA69F\uA6F0\uA6F1\uA802\uA806\uA80B\uA823-\uA827\uA880\uA881\uA8B4-\uA8C5\uA8E0-\uA8F1\uA8FF\uA926-\uA92D\uA947-\uA953\uA980-\uA983\uA9B3-\uA9C0\uA9E5\uAA29-\uAA36\uAA43\uAA4C\uAA4D\uAA7B-\uAA7D\uAAB0\uAAB2-\uAAB4\uAAB7\uAAB8\uAABE\uAABF\uAAC1\uAAEB-\uAAEF\uAAF5\uAAF6\uABE3-\uABEA\uABEC\uABED\uFB1E\uFE00-\uFE0F\uFE20-\uFE2F]/g, "").replace(NON_DECOMPOSABLE_RE, (ch) => NON_DECOMPOSABLE_MAP[ch]) : (str2) => str2;
+var stripDiacritics = typeof String.prototype.normalize === "function" ? (str2) => str2.normalize("NFD").replace(/[\u0300-\u036F\u0483-\u0489\u0591-\u05BD\u05BF\u05C1\u05C2\u05C4\u05C5\u05C7\u0610-\u061A\u064B-\u065F\u0670\u06D6-\u06DC\u06DF-\u06E4\u06E7\u06E8\u06EA-\u06ED\u0711\u0730-\u074A\u07A6-\u07B0\u07EB-\u07F3\u07FD\u0816-\u0819\u081B-\u0823\u0825-\u0827\u0829-\u082D\u0859-\u085B\u08D3-\u08E1\u08E3-\u0903\u093A-\u093C\u093E-\u094F\u0951-\u0957\u0962\u0963\u0981-\u0983\u09BC\u09BE-\u09C4\u09C7\u09C8\u09CB-\u09CD\u09D7\u09E2\u09E3\u09FE\u0A01-\u0A03\u0A3C\u0A3E-\u0A42\u0A47\u0A48\u0A4B-\u0A4D\u0A51\u0A70\u0A71\u0A75\u0A81-\u0A83\u0ABC\u0ABE-\u0AC5\u0AC7-\u0AC9\u0ACB-\u0ACD\u0AE2\u0AE3\u0AFA-\u0AFF\u0B01-\u0B03\u0B3C\u0B3E-\u0B44\u0B47\u0B48\u0B4B-\u0B4D\u0B56\u0B57\u0B62\u0B63\u0B82\u0BBE-\u0BC2\u0BC6-\u0BC8\u0BCA-\u0BCD\u0BD7\u0C00-\u0C04\u0C3E-\u0C44\u0C46-\u0C48\u0C4A-\u0C4D\u0C55\u0C56\u0C62\u0C63\u0C81-\u0C83\u0CBC\u0CBE-\u0CC4\u0CC6-\u0CC8\u0CCA-\u0CCD\u0CD5\u0CD6\u0CE2\u0CE3\u0D00-\u0D03\u0D3B\u0D3C\u0D3E-\u0D44\u0D46-\u0D48\u0D4A-\u0D4D\u0D57\u0D62\u0D63\u0D82\u0D83\u0DCA\u0DCF-\u0DD4\u0DD6\u0DD8-\u0DDF\u0DF2\u0DF3\u0E31\u0E34-\u0E3A\u0E47-\u0E4E\u0EB1\u0EB4-\u0EB9\u0EBB\u0EBC\u0EC8-\u0ECD\u0F18\u0F19\u0F35\u0F37\u0F39\u0F3E\u0F3F\u0F71-\u0F84\u0F86\u0F87\u0F8D-\u0F97\u0F99-\u0FBC\u0FC6\u102B-\u103E\u1056-\u1059\u105E-\u1060\u1062-\u1064\u1067-\u106D\u1071-\u1074\u1082-\u108D\u108F\u109A-\u109D\u135D-\u135F\u1712-\u1714\u1732-\u1734\u1752\u1753\u1772\u1773\u17B4-\u17D3\u17DD\u180B-\u180D\u1885\u1886\u18A9\u1920-\u192B\u1930-\u193B\u1A17-\u1A1B\u1A55-\u1A5E\u1A60-\u1A7C\u1A7F\u1AB0-\u1ABE\u1B00-\u1B04\u1B34-\u1B44\u1B6B-\u1B73\u1B80-\u1B82\u1BA1-\u1BAD\u1BE6-\u1BF3\u1C24-\u1C37\u1CD0-\u1CD2\u1CD4-\u1CE8\u1CED\u1CF2-\u1CF4\u1CF7-\u1CF9\u1DC0-\u1DF9\u1DFB-\u1DFF\u20D0-\u20F0\u2CEF-\u2CF1\u2D7F\u2DE0-\u2DFF\u302A-\u302F\u3099\u309A\uA66F-\uA672\uA674-\uA67D\uA69E\uA69F\uA6F0\uA6F1\uA802\uA806\uA80B\uA823-\uA827\uA880\uA881\uA8B4-\uA8C5\uA8E0-\uA8F1\uA8FF\uA926-\uA92D\uA947-\uA953\uA980-\uA983\uA9B3-\uA9C0\uA9E5\uAA29-\uAA36\uAA43\uAA4C\uAA4D\uAA7B-\uAA7D\uAAB0\uAAB2-\uAAB4\uAAB7\uAAB8\uAABE\uAABF\uAAC1\uAAEB-\uAAEF\uAAF5\uAAF6\uABE3-\uABEA\uABEC\uABED\uFB1E\uFE00-\uFE0F\uFE20-\uFE2F]/g, "").replace(NON_DECOMPOSABLE_RE, (ch) => NON_DECOMPOSABLE_MAP[ch]) : (str2) => str2;
 var BitapSearch = class {
-  constructor(pattern, {
-    location = Config.location,
-    threshold = Config.threshold,
-    distance = Config.distance,
-    includeMatches = Config.includeMatches,
-    findAllMatches = Config.findAllMatches,
-    minMatchCharLength = Config.minMatchCharLength,
-    isCaseSensitive = Config.isCaseSensitive,
-    ignoreDiacritics = Config.ignoreDiacritics,
-    ignoreLocation = Config.ignoreLocation
-  } = {}) {
+  constructor(pattern, { location = Config.location, threshold = Config.threshold, distance = Config.distance, includeMatches = Config.includeMatches, findAllMatches = Config.findAllMatches, minMatchCharLength = Config.minMatchCharLength, isCaseSensitive = Config.isCaseSensitive, ignoreDiacritics = Config.ignoreDiacritics, ignoreLocation = Config.ignoreLocation } = {}) {
     this.options = {
       location,
       threshold,
@@ -15680,9 +15612,7 @@ var BitapSearch = class {
     pattern = ignoreDiacritics ? stripDiacritics(pattern) : pattern;
     this.pattern = pattern;
     this.chunks = [];
-    if (!this.pattern.length) {
-      return;
-    }
+    if (!this.pattern.length) return;
     const addChunk = (pattern2, startIndex) => {
       this.chunks.push({
         pattern: pattern2,
@@ -15691,61 +15621,42 @@ var BitapSearch = class {
       });
     };
     const len = this.pattern.length;
-    if (len > MAX_BITS) {
+    if (len > 32) {
       let i = 0;
-      const remainder = len % MAX_BITS;
+      const remainder = len % 32;
       const end = len - remainder;
       while (i < end) {
-        addChunk(this.pattern.substr(i, MAX_BITS), i);
-        i += MAX_BITS;
+        addChunk(this.pattern.substr(i, 32), i);
+        i += 32;
       }
       if (remainder) {
-        const startIndex = len - MAX_BITS;
+        const startIndex = len - 32;
         addChunk(this.pattern.substr(startIndex), startIndex);
       }
-    } else {
-      addChunk(this.pattern, 0);
-    }
+    } else addChunk(this.pattern, 0);
   }
   searchIn(text3) {
-    const {
-      isCaseSensitive,
-      ignoreDiacritics,
-      includeMatches
-    } = this.options;
+    const { isCaseSensitive, ignoreDiacritics, includeMatches } = this.options;
     text3 = isCaseSensitive ? text3 : text3.toLowerCase();
     text3 = ignoreDiacritics ? stripDiacritics(text3) : text3;
     if (this.pattern === text3) {
+      if (text3.length < this.options.minMatchCharLength) return {
+        isMatch: false,
+        score: 1
+      };
       const result2 = {
         isMatch: true,
         score: 0
       };
-      if (includeMatches) {
-        result2.indices = [[0, text3.length - 1]];
-      }
+      if (includeMatches) result2.indices = [[0, text3.length - 1]];
       return result2;
     }
-    const {
-      location,
-      distance,
-      threshold,
-      findAllMatches,
-      minMatchCharLength,
-      ignoreLocation
-    } = this.options;
+    const { location, distance, threshold, findAllMatches, minMatchCharLength, ignoreLocation } = this.options;
     const allIndices = [];
     let totalScore = 0;
     let hasMatches = false;
-    this.chunks.forEach(({
-      pattern,
-      alphabet,
-      startIndex
-    }) => {
-      const {
-        isMatch,
-        score,
-        indices
-      } = search(text3, pattern, alphabet, {
+    this.chunks.forEach(({ pattern, alphabet, startIndex }) => {
+      const { isMatch, score, indices } = search(text3, pattern, alphabet, {
         location: location + startIndex,
         distance,
         threshold,
@@ -15754,249 +15665,169 @@ var BitapSearch = class {
         includeMatches,
         ignoreLocation
       });
-      if (isMatch) {
-        hasMatches = true;
-      }
+      if (isMatch) hasMatches = true;
       totalScore += score;
-      if (isMatch && indices) {
-        allIndices.push(...indices);
-      }
+      if (isMatch && indices) allIndices.push(...indices);
     });
     const result = {
       isMatch: hasMatches,
       score: hasMatches ? totalScore / this.chunks.length : 1
     };
-    if (hasMatches && includeMatches) {
-      result.indices = mergeIndices(allIndices);
-    }
+    if (hasMatches && includeMatches) result.indices = mergeIndices(allIndices);
     return result;
   }
 };
-var BaseMatch = class {
-  constructor(pattern) {
-    this.pattern = pattern;
-  }
-  static isMultiMatch(pattern) {
-    return getMatch(pattern, this.multiRegex);
-  }
-  static isSingleMatch(pattern) {
-    return getMatch(pattern, this.singleRegex);
-  }
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
-  search(_text) {
-    return {
-      isMatch: false,
-      score: 1
-    };
-  }
-};
-function getMatch(pattern, exp) {
-  const matches = pattern.match(exp);
-  return matches ? matches[1] : null;
+var MULTI_MATCH_TYPES = /* @__PURE__ */ new Set(["fuzzy", "include"]);
+function isInverse(type) {
+  return type.startsWith("inverse");
 }
-var ExactMatch = class extends BaseMatch {
-  constructor(pattern) {
-    super(pattern);
-  }
-  static get type() {
-    return "exact";
-  }
-  static get multiRegex() {
-    return /^="(.*)"$/;
-  }
-  static get singleRegex() {
-    return /^=(.*)$/;
-  }
-  search(text3) {
-    const isMatch = text3 === this.pattern;
-    return {
-      isMatch,
-      score: isMatch ? 0 : 1,
-      indices: [0, this.pattern.length - 1]
-    };
-  }
-};
-var InverseExactMatch = class extends BaseMatch {
-  constructor(pattern) {
-    super(pattern);
-  }
-  static get type() {
-    return "inverse-exact";
-  }
-  static get multiRegex() {
-    return /^!"(.*)"$/;
-  }
-  static get singleRegex() {
-    return /^!(.*)$/;
-  }
-  search(text3) {
-    const index = text3.indexOf(this.pattern);
-    const isMatch = index === -1;
-    return {
-      isMatch,
-      score: isMatch ? 0 : 1,
-      indices: [0, text3.length - 1]
-    };
-  }
-};
-var PrefixExactMatch = class extends BaseMatch {
-  constructor(pattern) {
-    super(pattern);
-  }
-  static get type() {
-    return "prefix-exact";
-  }
-  static get multiRegex() {
-    return /^\^"(.*)"$/;
-  }
-  static get singleRegex() {
-    return /^\^(.*)$/;
-  }
-  search(text3) {
-    const isMatch = text3.startsWith(this.pattern);
-    return {
-      isMatch,
-      score: isMatch ? 0 : 1,
-      indices: [0, this.pattern.length - 1]
-    };
-  }
-};
-var InversePrefixExactMatch = class extends BaseMatch {
-  constructor(pattern) {
-    super(pattern);
-  }
-  static get type() {
-    return "inverse-prefix-exact";
-  }
-  static get multiRegex() {
-    return /^!\^"(.*)"$/;
-  }
-  static get singleRegex() {
-    return /^!\^(.*)$/;
-  }
-  search(text3) {
-    const isMatch = !text3.startsWith(this.pattern);
-    return {
-      isMatch,
-      score: isMatch ? 0 : 1,
-      indices: [0, text3.length - 1]
-    };
-  }
-};
-var SuffixExactMatch = class extends BaseMatch {
-  constructor(pattern) {
-    super(pattern);
-  }
-  static get type() {
-    return "suffix-exact";
-  }
-  static get multiRegex() {
-    return /^"(.*)"\$$/;
-  }
-  static get singleRegex() {
-    return /^(.*)\$$/;
-  }
-  search(text3) {
-    const isMatch = text3.endsWith(this.pattern);
-    return {
-      isMatch,
-      score: isMatch ? 0 : 1,
-      indices: [text3.length - this.pattern.length, text3.length - 1]
-    };
-  }
-};
-var InverseSuffixExactMatch = class extends BaseMatch {
-  constructor(pattern) {
-    super(pattern);
-  }
-  static get type() {
-    return "inverse-suffix-exact";
-  }
-  static get multiRegex() {
-    return /^!"(.*)"\$$/;
-  }
-  static get singleRegex() {
-    return /^!(.*)\$$/;
-  }
-  search(text3) {
-    const isMatch = !text3.endsWith(this.pattern);
-    return {
-      isMatch,
-      score: isMatch ? 0 : 1,
-      indices: [0, text3.length - 1]
-    };
-  }
-};
-var FuzzyMatch = class extends BaseMatch {
-  constructor(pattern, {
-    location = Config.location,
-    threshold = Config.threshold,
-    distance = Config.distance,
-    includeMatches = Config.includeMatches,
-    findAllMatches = Config.findAllMatches,
-    minMatchCharLength = Config.minMatchCharLength,
-    isCaseSensitive = Config.isCaseSensitive,
-    ignoreDiacritics = Config.ignoreDiacritics,
-    ignoreLocation = Config.ignoreLocation
-  } = {}) {
-    super(pattern);
-    this._bitapSearch = new BitapSearch(pattern, {
-      location,
-      threshold,
-      distance,
-      includeMatches,
-      findAllMatches,
-      minMatchCharLength,
-      isCaseSensitive,
-      ignoreDiacritics,
-      ignoreLocation
-    });
-  }
-  static get type() {
-    return "fuzzy";
-  }
-  static get multiRegex() {
-    return /^"(.*)"$/;
-  }
-  static get singleRegex() {
-    return /^(.*)$/;
-  }
-  search(text3) {
-    return this._bitapSearch.searchIn(text3);
-  }
-};
-var IncludeMatch = class extends BaseMatch {
-  constructor(pattern) {
-    super(pattern);
-  }
-  static get type() {
-    return "include";
-  }
-  static get multiRegex() {
-    return /^'"(.*)"$/;
-  }
-  static get singleRegex() {
-    return /^'(.*)$/;
-  }
-  search(text3) {
-    let location = 0;
-    let index;
-    const indices = [];
-    const patternLen = this.pattern.length;
-    while ((index = text3.indexOf(this.pattern, location)) > -1) {
-      location = index + patternLen;
-      indices.push([index, location - 1]);
+var matchers = [
+  {
+    type: "exact",
+    multiRegex: /^="(.*)"$/,
+    singleRegex: /^=(.*)$/,
+    create: (pattern) => ({
+      type: "exact",
+      search(text3) {
+        const isMatch = text3 === pattern;
+        return {
+          isMatch,
+          score: isMatch ? 0 : 1,
+          indices: [0, pattern.length - 1]
+        };
+      }
+    })
+  },
+  {
+    type: "include",
+    multiRegex: /^'"(.*)"$/,
+    singleRegex: /^'(.*)$/,
+    create: (pattern) => ({
+      type: "include",
+      search(text3) {
+        let location = 0;
+        let index;
+        const indices = [];
+        const patternLen = pattern.length;
+        while ((index = text3.indexOf(pattern, location)) > -1) {
+          location = index + patternLen;
+          indices.push([index, location - 1]);
+        }
+        const isMatch = !!indices.length;
+        return {
+          isMatch,
+          score: isMatch ? 0 : 1,
+          indices
+        };
+      }
+    })
+  },
+  {
+    type: "prefix-exact",
+    multiRegex: /^\^"(.*)"$/,
+    singleRegex: /^\^(.*)$/,
+    create: (pattern) => ({
+      type: "prefix-exact",
+      search(text3) {
+        const isMatch = text3.startsWith(pattern);
+        return {
+          isMatch,
+          score: isMatch ? 0 : 1,
+          indices: [0, pattern.length - 1]
+        };
+      }
+    })
+  },
+  {
+    type: "inverse-prefix-exact",
+    multiRegex: /^!\^"(.*)"$/,
+    singleRegex: /^!\^(.*)$/,
+    create: (pattern) => ({
+      type: "inverse-prefix-exact",
+      search(text3) {
+        const isMatch = !text3.startsWith(pattern);
+        return {
+          isMatch,
+          score: isMatch ? 0 : 1,
+          indices: [0, text3.length - 1]
+        };
+      }
+    })
+  },
+  {
+    type: "inverse-suffix-exact",
+    multiRegex: /^!"(.*)"\$$/,
+    singleRegex: /^!(.*)\$$/,
+    create: (pattern) => ({
+      type: "inverse-suffix-exact",
+      search(text3) {
+        const isMatch = !text3.endsWith(pattern);
+        return {
+          isMatch,
+          score: isMatch ? 0 : 1,
+          indices: [0, text3.length - 1]
+        };
+      }
+    })
+  },
+  {
+    type: "suffix-exact",
+    multiRegex: /^"(.*)"\$$/,
+    singleRegex: /^(.*)\$$/,
+    create: (pattern) => ({
+      type: "suffix-exact",
+      search(text3) {
+        const isMatch = text3.endsWith(pattern);
+        return {
+          isMatch,
+          score: isMatch ? 0 : 1,
+          indices: [text3.length - pattern.length, text3.length - 1]
+        };
+      }
+    })
+  },
+  {
+    type: "inverse-exact",
+    multiRegex: /^!"(.*)"$/,
+    singleRegex: /^!(.*)$/,
+    create: (pattern) => ({
+      type: "inverse-exact",
+      search(text3) {
+        const isMatch = text3.indexOf(pattern) === -1;
+        return {
+          isMatch,
+          score: isMatch ? 0 : 1,
+          indices: [0, text3.length - 1]
+        };
+      }
+    })
+  },
+  {
+    type: "fuzzy",
+    multiRegex: /^"(.*)"$/,
+    singleRegex: /^(.*)$/,
+    create: (pattern, options = {}) => {
+      const bitap = new BitapSearch(pattern, {
+        location: options.location ?? Config.location,
+        threshold: options.threshold ?? Config.threshold,
+        distance: options.distance ?? Config.distance,
+        includeMatches: options.includeMatches ?? Config.includeMatches,
+        findAllMatches: options.findAllMatches ?? Config.findAllMatches,
+        minMatchCharLength: options.minMatchCharLength ?? Config.minMatchCharLength,
+        isCaseSensitive: options.isCaseSensitive ?? Config.isCaseSensitive,
+        ignoreDiacritics: options.ignoreDiacritics ?? Config.ignoreDiacritics,
+        ignoreLocation: options.ignoreLocation ?? Config.ignoreLocation
+      });
+      return {
+        type: "fuzzy",
+        search(text3) {
+          return bitap.searchIn(text3);
+        }
+      };
     }
-    const isMatch = !!indices.length;
-    return {
-      isMatch,
-      score: isMatch ? 0 : 1,
-      indices
-    };
   }
-};
-var searchers = [ExactMatch, IncludeMatch, PrefixExactMatch, InversePrefixExactMatch, InverseSuffixExactMatch, SuffixExactMatch, InverseExactMatch, FuzzyMatch];
-var searchersLen = searchers.length;
+];
+var matchersLen = matchers.length;
 var ESCAPED_PIPE = "\0";
 var OR_TOKEN = "|";
 function tokenize(pattern) {
@@ -16034,33 +15865,33 @@ function tokenize(pattern) {
   }
   return tokens2;
 }
+function getMatch(pattern, exp) {
+  const matches = pattern.match(exp);
+  return matches ? matches[1] : null;
+}
 function parseQuery(pattern, options = {}) {
-  const escaped = pattern.replace(/\\\|/g, ESCAPED_PIPE);
-  return escaped.split(OR_TOKEN).map((item) => {
-    const restored = item.replace(/\u0000/g, "|");
-    const query = tokenize(restored.trim()).filter((item2) => item2 && !!item2.trim());
+  return pattern.replace(/\\\|/g, ESCAPED_PIPE).split(OR_TOKEN).map((item) => {
+    const query = tokenize(item.replace(/\u0000/g, "|").trim()).filter((item2) => item2 && !!item2.trim());
     const results = [];
     for (let i = 0, len = query.length; i < len; i += 1) {
       const queryItem = query[i];
       let found = false;
       let idx = -1;
-      while (!found && ++idx < searchersLen) {
-        const searcher = searchers[idx];
-        const token = searcher.isMultiMatch(queryItem);
+      while (!found && ++idx < matchersLen) {
+        const def = matchers[idx];
+        const token = getMatch(queryItem, def.multiRegex);
         if (token) {
-          results.push(new searcher(token, options));
+          results.push(def.create(token, options));
           found = true;
         }
       }
-      if (found) {
-        continue;
-      }
+      if (found) continue;
       idx = -1;
-      while (++idx < searchersLen) {
-        const searcher = searchers[idx];
-        const token = searcher.isSingleMatch(queryItem);
+      while (++idx < matchersLen) {
+        const def = matchers[idx];
+        const token = getMatch(queryItem, def.singleRegex);
         if (token) {
-          results.push(new searcher(token, options));
+          results.push(def.create(token, options));
           break;
         }
       }
@@ -16068,19 +15899,8 @@ function parseQuery(pattern, options = {}) {
     return results;
   });
 }
-var MultiMatchSet = /* @__PURE__ */ new Set([FuzzyMatch.type, IncludeMatch.type]);
 var ExtendedSearch = class {
-  constructor(pattern, {
-    isCaseSensitive = Config.isCaseSensitive,
-    ignoreDiacritics = Config.ignoreDiacritics,
-    includeMatches = Config.includeMatches,
-    minMatchCharLength = Config.minMatchCharLength,
-    ignoreLocation = Config.ignoreLocation,
-    findAllMatches = Config.findAllMatches,
-    location = Config.location,
-    threshold = Config.threshold,
-    distance = Config.distance
-  } = {}) {
+  constructor(pattern, { isCaseSensitive = Config.isCaseSensitive, ignoreDiacritics = Config.ignoreDiacritics, includeMatches = Config.includeMatches, minMatchCharLength = Config.minMatchCharLength, ignoreLocation = Config.ignoreLocation, findAllMatches = Config.findAllMatches, location = Config.location, threshold = Config.threshold, distance = Config.distance } = {}) {
     this.query = null;
     this.options = {
       isCaseSensitive,
@@ -16101,22 +15921,13 @@ var ExtendedSearch = class {
   static condition(_, options) {
     return options.useExtendedSearch;
   }
-  // Note: searchIn operates on a single text value and sets hasInverse on the
-  // result when inverse patterns are involved. _searchObjectList uses this to
-  // switch from "ANY key" to "ALL keys" aggregation. See #712.
   searchIn(text3) {
     const query = this.query;
-    if (!query) {
-      return {
-        isMatch: false,
-        score: 1
-      };
-    }
-    const {
-      includeMatches,
-      isCaseSensitive,
-      ignoreDiacritics
-    } = this.options;
+    if (!query) return {
+      isMatch: false,
+      score: 1
+    };
+    const { includeMatches, isCaseSensitive, ignoreDiacritics } = this.options;
     text3 = isCaseSensitive ? text3 : text3.toLowerCase();
     text3 = ignoreDiacritics ? stripDiacritics(text3) : text3;
     let numMatches = 0;
@@ -16124,31 +15935,19 @@ var ExtendedSearch = class {
     let totalScore = 0;
     let hasInverse = false;
     for (let i = 0, qLen = query.length; i < qLen; i += 1) {
-      const searchers2 = query[i];
+      const searchers = query[i];
       allIndices.length = 0;
       numMatches = 0;
       hasInverse = false;
-      for (let j = 0, pLen = searchers2.length; j < pLen; j += 1) {
-        const searcher = searchers2[j];
-        const {
-          isMatch,
-          indices,
-          score
-        } = searcher.search(text3);
+      for (let j = 0, pLen = searchers.length; j < pLen; j += 1) {
+        const matcher = searchers[j];
+        const { isMatch, indices, score } = matcher.search(text3);
         if (isMatch) {
           numMatches += 1;
           totalScore += score;
-          const type = searcher.constructor.type;
-          if (type.startsWith("inverse")) {
-            hasInverse = true;
-          }
-          if (includeMatches) {
-            if (MultiMatchSet.has(type)) {
-              allIndices.push(...indices);
-            } else {
-              allIndices.push(indices);
-            }
-          }
+          if (isInverse(matcher.type)) hasInverse = true;
+          if (includeMatches) if (MULTI_MATCH_TYPES.has(matcher.type)) allIndices.push(...indices);
+          else allIndices.push(indices);
         } else {
           totalScore = 0;
           numMatches = 0;
@@ -16162,12 +15961,8 @@ var ExtendedSearch = class {
           isMatch: true,
           score: totalScore / numMatches
         };
-        if (hasInverse) {
-          result.hasInverse = true;
-        }
-        if (includeMatches) {
-          result.indices = mergeIndices(allIndices);
-        }
+        if (hasInverse) result.hasInverse = true;
+        if (includeMatches) result.indices = mergeIndices(allIndices);
         return result;
       }
     }
@@ -16184,9 +15979,7 @@ function register(...args) {
 function createSearcher(pattern, options) {
   for (let i = 0, len = registeredSearchers.length; i < len; i += 1) {
     const searcherClass = registeredSearchers[i];
-    if (searcherClass.condition(pattern, options)) {
-      return new searcherClass(pattern, options);
-    }
+    if (searcherClass.condition(pattern, options)) return new searcherClass(pattern, options);
   }
   return new BitapSearch(pattern, options);
 }
@@ -16201,43 +15994,29 @@ var KeyType = {
 var isExpression = (query) => !!(query[LogicalOperator.AND] || query[LogicalOperator.OR]);
 var isPath = (query) => !!query[KeyType.PATH];
 var isLeaf = (query) => !isArray(query) && isObject(query) && !isExpression(query);
-var convertToExplicit = (query) => ({
-  [LogicalOperator.AND]: Object.keys(query).map((key) => ({
-    [key]: query[key]
-  }))
-});
-function parse(query, options, {
-  auto = true
-} = {}) {
+var convertToExplicit = (query) => ({ [LogicalOperator.AND]: Object.keys(query).map((key) => ({ [key]: query[key] })) });
+function parse(query, options, { auto = true } = {}) {
   const next = (query2) => {
     if (isString(query2)) {
       const obj = {
         keyId: null,
         pattern: query2
       };
-      if (auto) {
-        obj.searcher = createSearcher(query2, options);
-      }
+      if (auto) obj.searcher = createSearcher(query2, options);
       return obj;
     }
     const keys = Object.keys(query2);
     const isQueryPath = isPath(query2);
-    if (!isQueryPath && keys.length > 1 && !isExpression(query2)) {
-      return next(convertToExplicit(query2));
-    }
+    if (!isQueryPath && keys.length > 1 && !isExpression(query2)) return next(convertToExplicit(query2));
     if (isLeaf(query2)) {
       const key = isQueryPath ? query2[KeyType.PATH] : keys[0];
       const pattern = isQueryPath ? query2[KeyType.PATTERN] : query2[key];
-      if (!isString(pattern)) {
-        throw new Error(LOGICAL_SEARCH_INVALID_QUERY_FOR_KEY(key));
-      }
+      if (!isString(pattern)) throw new Error(LOGICAL_SEARCH_INVALID_QUERY_FOR_KEY(key));
       const obj = {
         keyId: createKeyId(key),
         pattern
       };
-      if (auto) {
-        obj.searcher = createSearcher(pattern, options);
-      }
+      if (auto) obj.searcher = createSearcher(pattern, options);
       return obj;
     }
     const node = {
@@ -16246,70 +16025,54 @@ function parse(query, options, {
     };
     keys.forEach((key) => {
       const value = query2[key];
-      if (isArray(value)) {
-        value.forEach((item) => {
-          node.children.push(next(item));
-        });
-      }
+      if (isArray(value)) value.forEach((item) => {
+        node.children.push(next(item));
+      });
     });
     return node;
   };
-  if (!isExpression(query)) {
-    query = convertToExplicit(query);
-  }
+  if (!isExpression(query)) query = convertToExplicit(query);
   return next(query);
 }
-function computeScoreSingle(matches, {
-  ignoreFieldNorm = Config.ignoreFieldNorm
-}) {
+function computeScoreSingle(matches, { ignoreFieldNorm = Config.ignoreFieldNorm }) {
   let totalScore = 1;
-  matches.forEach(({
-    key,
-    norm: norm2,
-    score
-  }) => {
+  matches.forEach(({ key, norm: norm2, score }) => {
     const weight = key ? key.weight : null;
     totalScore *= Math.pow(score === 0 && weight ? Number.EPSILON : score, (weight || 1) * (ignoreFieldNorm ? 1 : norm2));
   });
   return totalScore;
 }
-function computeScore(results, {
-  ignoreFieldNorm = Config.ignoreFieldNorm
-}) {
+function computeScore(results, { ignoreFieldNorm = Config.ignoreFieldNorm }) {
   results.forEach((result) => {
-    result.score = computeScoreSingle(result.matches, {
-      ignoreFieldNorm
-    });
+    result.score = computeScoreSingle(result.matches, { ignoreFieldNorm });
   });
 }
 var MaxHeap = class {
-  constructor(limit) {
+  constructor(limit, comparator) {
     this.limit = limit;
     this.heap = [];
+    this.comparator = comparator;
   }
   get size() {
     return this.heap.length;
-  }
-  shouldInsert(score) {
-    return this.size < this.limit || score < this.heap[0].score;
   }
   insert(item) {
     if (this.size < this.limit) {
       this.heap.push(item);
       this._bubbleUp(this.size - 1);
-    } else if (item.score < this.heap[0].score) {
+    } else if (this.comparator(item, this.heap[0]) < 0) {
       this.heap[0] = item;
       this._sinkDown(0);
     }
   }
-  extractSorted(sortFn) {
-    return this.heap.sort(sortFn);
+  extractSorted() {
+    return this.heap.sort(this.comparator);
   }
   _bubbleUp(i) {
     const heap = this.heap;
     while (i > 0) {
       const parent = i - 1 >> 1;
-      if (heap[i].score <= heap[parent].score) break;
+      if (this.comparator(heap[i], heap[parent]) <= 0) break;
       const tmp = heap[i];
       heap[i] = heap[parent];
       heap[parent] = tmp;
@@ -16324,12 +16087,8 @@ var MaxHeap = class {
       i = largest;
       const left = 2 * i + 1;
       const right = 2 * i + 2;
-      if (left < len && heap[left].score > heap[largest].score) {
-        largest = left;
-      }
-      if (right < len && heap[right].score > heap[largest].score) {
-        largest = right;
-      }
+      if (left < len && this.comparator(heap[left], heap[largest]) > 0) largest = left;
+      if (right < len && this.comparator(heap[right], heap[largest]) > 0) largest = right;
       if (largest !== i) {
         const tmp = heap[i];
         heap[i] = heap[largest];
@@ -16338,599 +16097,66 @@ var MaxHeap = class {
     } while (largest !== i);
   }
 };
-function transformMatches(result, data) {
-  const matches = result.matches;
-  data.matches = [];
-  if (!isDefined(matches)) {
-    return;
-  }
-  matches.forEach((match) => {
-    if (!isDefined(match.indices) || !match.indices.length) {
-      return;
-    }
-    const {
-      indices,
-      value
-    } = match;
+function formatMatches(result) {
+  const matches = [];
+  result.matches.forEach((match) => {
+    if (!isDefined(match.indices) || !match.indices.length) return;
     const obj = {
-      indices,
-      value
+      indices: match.indices,
+      value: match.value
     };
-    if (match.key) {
-      obj.key = match.key.src;
-    }
-    if (match.idx > -1) {
-      obj.refIndex = match.idx;
-    }
-    data.matches.push(obj);
+    if (match.key) obj.key = match.key.id;
+    if (match.idx > -1) obj.refIndex = match.idx;
+    matches.push(obj);
   });
+  return matches;
 }
-function transformScore(result, data) {
-  data.score = result.score;
-}
-function format(results, docs, {
-  includeMatches = Config.includeMatches,
-  includeScore = Config.includeScore
-} = {}) {
-  const transformers = [];
-  if (includeMatches) transformers.push(transformMatches);
-  if (includeScore) transformers.push(transformScore);
+function format(results, docs, { includeMatches = Config.includeMatches, includeScore = Config.includeScore } = {}) {
   return results.map((result) => {
-    const {
-      idx
-    } = result;
+    const { idx } = result;
     const data = {
       item: docs[idx],
       refIndex: idx
     };
-    if (transformers.length) {
-      transformers.forEach((transformer) => {
-        transformer(result, data);
-      });
-    }
+    if (includeMatches) data.matches = formatMatches(result);
+    if (includeScore) data.score = result.score;
     return data;
   });
 }
-var WORD = /\b\w+\b/g;
-function createAnalyzer({
-  isCaseSensitive = false,
-  ignoreDiacritics = false
-} = {}) {
-  return {
-    tokenize(text3) {
-      if (!isCaseSensitive) {
-        text3 = text3.toLowerCase();
-      }
-      if (ignoreDiacritics) {
-        text3 = stripDiacritics(text3);
-      }
-      return text3.match(WORD) || [];
-    }
-  };
-}
-function buildInvertedIndex(records, keyCount, analyzer) {
-  const terms = /* @__PURE__ */ new Map();
-  const df = /* @__PURE__ */ new Map();
-  let fieldCount = 0;
-  function addField(text3, docIdx, keyIdx, subIdx) {
-    const tokens2 = analyzer.tokenize(text3);
-    if (!tokens2.length) return;
-    fieldCount++;
-    const termFreqs = /* @__PURE__ */ new Map();
-    for (const token of tokens2) {
-      termFreqs.set(token, (termFreqs.get(token) || 0) + 1);
-    }
-    for (const [term, tf] of termFreqs) {
-      const posting = {
-        docIdx,
-        keyIdx,
-        subIdx,
-        tf
-      };
-      let postings = terms.get(term);
-      if (!postings) {
-        postings = [];
-        terms.set(term, postings);
-      }
-      postings.push(posting);
-      df.set(term, (df.get(term) || 0) + 1);
-    }
-  }
-  for (const record3 of records) {
-    const {
-      i: docIdx,
-      v,
-      $: fields
-    } = record3;
-    if (v !== void 0) {
-      addField(v, docIdx, -1, -1);
-      continue;
-    }
-    if (fields) {
-      for (let keyIdx = 0; keyIdx < keyCount; keyIdx++) {
-        const value = fields[keyIdx];
-        if (!value) continue;
-        if (Array.isArray(value)) {
-          for (const sub of value) {
-            addField(sub.v, docIdx, keyIdx, sub.i ?? -1);
-          }
-        } else {
-          addField(value.v, docIdx, keyIdx, -1);
-        }
-      }
-    }
-  }
-  return {
-    terms,
-    fieldCount,
-    df
-  };
-}
-function addToInvertedIndex(index, record3, keyCount, analyzer) {
-  const {
-    i: docIdx,
-    v,
-    $: fields
-  } = record3;
-  function addField(text3, keyIdx, subIdx) {
-    const tokens2 = analyzer.tokenize(text3);
-    if (!tokens2.length) return;
-    index.fieldCount++;
-    const termFreqs = /* @__PURE__ */ new Map();
-    for (const token of tokens2) {
-      termFreqs.set(token, (termFreqs.get(token) || 0) + 1);
-    }
-    for (const [term, tf] of termFreqs) {
-      const posting = {
-        docIdx,
-        keyIdx,
-        subIdx,
-        tf
-      };
-      let postings = index.terms.get(term);
-      if (!postings) {
-        postings = [];
-        index.terms.set(term, postings);
-      }
-      postings.push(posting);
-      index.df.set(term, (index.df.get(term) || 0) + 1);
-    }
-  }
-  if (v !== void 0) {
-    addField(v, -1, -1);
-    return;
-  }
-  if (fields) {
-    for (let keyIdx = 0; keyIdx < keyCount; keyIdx++) {
-      const value = fields[keyIdx];
-      if (!value) continue;
-      if (Array.isArray(value)) {
-        for (const sub of value) {
-          addField(sub.v, keyIdx, sub.i ?? -1);
-        }
-      } else {
-        addField(value.v, keyIdx, -1);
-      }
-    }
+var DEFAULT_TOKEN = /[\p{L}\p{M}\p{N}_]+/gu;
+var warned = /* @__PURE__ */ new WeakSet();
+function warnNonGlobal(regex) {
+  if (!warned.has(regex)) {
+    warned.add(regex);
+    console.warn(`[Fuse] tokenize regex ${regex} lacks the global flag; only the first match per text will be returned. Add the 'g' flag.`);
   }
 }
-function removeFromInvertedIndex(index, docIdx) {
-  for (const [term, postings] of index.terms) {
-    const filtered = postings.filter((p) => p.docIdx !== docIdx);
-    const removed = postings.length - filtered.length;
-    if (removed > 0) {
-      index.fieldCount -= removed;
-      index.df.set(term, (index.df.get(term) || 0) - removed);
-      if (filtered.length === 0) {
-        index.terms.delete(term);
-        index.df.delete(term);
-      } else {
-        index.terms.set(term, filtered);
+function resolveTokenize(tokenize4) {
+  if (typeof tokenize4 === "function") {
+    let validated = false;
+    return (text3) => {
+      const result = tokenize4(text3);
+      if (!validated) {
+        validated = true;
+        if (!Array.isArray(result) || result.some((t) => typeof t !== "string")) throw new Error(`[Fuse] tokenize function must return string[]; received ${Array.isArray(result) ? "array containing non-strings" : typeof result}.`);
       }
-    }
-  }
-}
-var Fuse = class {
-  // Statics are assigned in entry.ts
-  constructor(docs, options, index) {
-    this.options = {
-      ...Config,
-      ...options
+      return result;
     };
-    if (this.options.useExtendedSearch && false) ;
-    if (this.options.useTokenSearch && false) ;
-    this._keyStore = new KeyStore(this.options.keys);
-    this._docs = docs;
-    this._myIndex = null;
-    this._invertedIndex = null;
-    this.setCollection(docs, index);
-    this._lastQuery = null;
-    this._lastSearcher = null;
   }
-  _getSearcher(query) {
-    if (this._lastQuery === query) {
-      return this._lastSearcher;
-    }
-    const opts = this._invertedIndex ? {
-      ...this.options,
-      _invertedIndex: this._invertedIndex
-    } : this.options;
-    const searcher = createSearcher(query, opts);
-    this._lastQuery = query;
-    this._lastSearcher = searcher;
-    return searcher;
+  if (tokenize4 instanceof RegExp) {
+    if (!tokenize4.global) warnNonGlobal(tokenize4);
+    return (text3) => text3.match(tokenize4) || [];
   }
-  setCollection(docs, index) {
-    this._docs = docs;
-    if (index && !(index instanceof FuseIndex)) {
-      throw new Error(INCORRECT_INDEX_TYPE);
-    }
-    this._myIndex = index || createIndex(this.options.keys, this._docs, {
-      getFn: this.options.getFn,
-      fieldNormWeight: this.options.fieldNormWeight
-    });
-    if (this.options.useTokenSearch) {
-      const analyzer = createAnalyzer({
-        isCaseSensitive: this.options.isCaseSensitive,
-        ignoreDiacritics: this.options.ignoreDiacritics
-      });
-      this._invertedIndex = buildInvertedIndex(this._myIndex.records, this._myIndex.keys.length, analyzer);
-    }
-  }
-  add(doc) {
-    if (!isDefined(doc)) {
-      return;
-    }
-    this._docs.push(doc);
-    this._myIndex.add(doc);
-    if (this._invertedIndex) {
-      const record3 = this._myIndex.records[this._myIndex.records.length - 1];
-      const analyzer = createAnalyzer({
-        isCaseSensitive: this.options.isCaseSensitive,
-        ignoreDiacritics: this.options.ignoreDiacritics
-      });
-      addToInvertedIndex(this._invertedIndex, record3, this._myIndex.keys.length, analyzer);
-    }
-  }
-  remove(predicate = () => false) {
-    const results = [];
-    const indicesToRemove = [];
-    for (let i = 0, len = this._docs.length; i < len; i += 1) {
-      if (predicate(this._docs[i], i)) {
-        results.push(this._docs[i]);
-        indicesToRemove.push(i);
-      }
-    }
-    if (indicesToRemove.length) {
-      if (this._invertedIndex) {
-        for (const idx of indicesToRemove) {
-          removeFromInvertedIndex(this._invertedIndex, idx);
-        }
-      }
-      for (let i = indicesToRemove.length - 1; i >= 0; i -= 1) {
-        this._docs.splice(indicesToRemove[i], 1);
-      }
-      this._myIndex.removeAll(indicesToRemove);
-    }
-    return results;
-  }
-  removeAt(idx) {
-    if (this._invertedIndex) {
-      removeFromInvertedIndex(this._invertedIndex, idx);
-    }
-    const doc = this._docs.splice(idx, 1)[0];
-    this._myIndex.removeAt(idx);
-    return doc;
-  }
-  getIndex() {
-    return this._myIndex;
-  }
-  search(query, options) {
-    const {
-      limit = -1
-    } = options || {};
-    const {
-      includeMatches,
-      includeScore,
-      shouldSort,
-      sortFn,
-      ignoreFieldNorm
-    } = this.options;
-    if (isString(query) && !query.trim()) {
-      let docs = this._docs.map((item, idx) => ({
-        item,
-        refIndex: idx
-      }));
-      if (isNumber(limit) && limit > -1) {
-        docs = docs.slice(0, limit);
-      }
-      return docs;
-    }
-    const useHeap = isNumber(limit) && limit > 0 && isString(query);
-    let results;
-    if (useHeap) {
-      const heap = new MaxHeap(limit);
-      if (isString(this._docs[0])) {
-        this._searchStringList(query, {
-          heap,
-          ignoreFieldNorm
-        });
-      } else {
-        this._searchObjectList(query, {
-          heap,
-          ignoreFieldNorm
-        });
-      }
-      results = heap.extractSorted(sortFn);
-    } else {
-      results = isString(query) ? isString(this._docs[0]) ? this._searchStringList(query) : this._searchObjectList(query) : this._searchLogical(query);
-      computeScore(results, {
-        ignoreFieldNorm
-      });
-      if (shouldSort) {
-        results.sort(sortFn);
-      }
-      if (isNumber(limit) && limit > -1) {
-        results = results.slice(0, limit);
-      }
-    }
-    return format(results, this._docs, {
-      includeMatches,
-      includeScore
-    });
-  }
-  _searchStringList(query, {
-    heap,
-    ignoreFieldNorm
-  } = {}) {
-    const searcher = this._getSearcher(query);
-    const {
-      records
-    } = this._myIndex;
-    const results = heap ? null : [];
-    records.forEach(({
-      v: text3,
-      i: idx,
-      n: norm2
-    }) => {
-      if (!isDefined(text3)) {
-        return;
-      }
-      const {
-        isMatch,
-        score,
-        indices
-      } = searcher.searchIn(text3);
-      if (isMatch) {
-        const result = {
-          item: text3,
-          idx,
-          matches: [{
-            score,
-            value: text3,
-            norm: norm2,
-            indices
-          }]
-        };
-        if (heap) {
-          result.score = computeScoreSingle(result.matches, {
-            ignoreFieldNorm
-          });
-          if (heap.shouldInsert(result.score)) {
-            heap.insert(result);
-          }
-        } else {
-          results.push(result);
-        }
-      }
-    });
-    return results;
-  }
-  _searchLogical(query) {
-    const expression = parse(query, this.options);
-    const evaluate = (node, item, idx) => {
-      if (!("children" in node)) {
-        const {
-          keyId,
-          searcher
-        } = node;
-        let matches;
-        if (keyId === null) {
-          matches = [];
-          this._myIndex.keys.forEach((key, keyIndex) => {
-            matches.push(...this._findMatches({
-              key,
-              value: item[keyIndex],
-              searcher
-            }));
-          });
-        } else {
-          matches = this._findMatches({
-            key: this._keyStore.get(keyId),
-            value: this._myIndex.getValueForItemAtKeyId(item, keyId),
-            searcher
-          });
-        }
-        if (matches && matches.length) {
-          return [{
-            idx,
-            item,
-            matches
-          }];
-        }
-        return [];
-      }
-      const {
-        children,
-        operator
-      } = node;
-      const res = [];
-      for (let i = 0, len = children.length; i < len; i += 1) {
-        const child = children[i];
-        const result = evaluate(child, item, idx);
-        if (result.length) {
-          res.push(...result);
-        } else if (operator === LogicalOperator.AND) {
-          return [];
-        }
-      }
-      return res;
-    };
-    const records = this._myIndex.records;
-    const resultMap = /* @__PURE__ */ new Map();
-    const results = [];
-    records.forEach(({
-      $: item,
-      i: idx
-    }) => {
-      if (isDefined(item)) {
-        const expResults = evaluate(expression, item, idx);
-        if (expResults.length) {
-          if (!resultMap.has(idx)) {
-            resultMap.set(idx, {
-              idx,
-              item,
-              matches: []
-            });
-            results.push(resultMap.get(idx));
-          }
-          expResults.forEach(({
-            matches
-          }) => {
-            resultMap.get(idx).matches.push(...matches);
-          });
-        }
-      }
-    });
-    return results;
-  }
-  // When a search involves inverse patterns (e.g. !Syrup), the aggregation
-  // across keys switches from "ANY key matches" to "ALL keys must match."
-  // This is signaled by hasInverse on the SearchResult from ExtendedSearch.
-  //
-  // For mixed patterns like "^hello !Syrup", a key failure is ambiguous —
-  // it could be the positive or inverse term that failed. In that case we
-  // conservatively exclude the item, which is strictly better than the old
-  // behavior of including it. See: https://github.com/krisk/Fuse/issues/712
-  _searchObjectList(query, {
-    heap,
-    ignoreFieldNorm
-  } = {}) {
-    const searcher = this._getSearcher(query);
-    const {
-      keys,
-      records
-    } = this._myIndex;
-    const results = heap ? null : [];
-    records.forEach(({
-      $: item,
-      i: idx
-    }) => {
-      if (!isDefined(item)) {
-        return;
-      }
-      const matches = [];
-      let anyKeyFailed = false;
-      let hasInverse = false;
-      keys.forEach((key, keyIndex) => {
-        const keyMatches = this._findMatches({
-          key,
-          value: item[keyIndex],
-          searcher
-        });
-        if (keyMatches.length) {
-          matches.push(...keyMatches);
-          if (keyMatches[0].hasInverse) {
-            hasInverse = true;
-          }
-        } else {
-          anyKeyFailed = true;
-        }
-      });
-      if (hasInverse && anyKeyFailed) {
-        return;
-      }
-      if (matches.length) {
-        const result = {
-          idx,
-          item,
-          matches
-        };
-        if (heap) {
-          result.score = computeScoreSingle(result.matches, {
-            ignoreFieldNorm
-          });
-          if (heap.shouldInsert(result.score)) {
-            heap.insert(result);
-          }
-        } else {
-          results.push(result);
-        }
-      }
-    });
-    return results;
-  }
-  _findMatches({
-    key,
-    value,
-    searcher
-  }) {
-    if (!isDefined(value)) {
-      return [];
-    }
-    const matches = [];
-    if (isArray(value)) {
-      value.forEach(({
-        v: text3,
-        i: idx,
-        n: norm2
-      }) => {
-        if (!isDefined(text3)) {
-          return;
-        }
-        const {
-          isMatch,
-          score,
-          indices,
-          hasInverse
-        } = searcher.searchIn(text3);
-        if (isMatch) {
-          matches.push({
-            score,
-            key,
-            value: text3,
-            idx,
-            norm: norm2,
-            indices,
-            hasInverse
-          });
-        }
-      });
-    } else {
-      const {
-        v: text3,
-        n: norm2
-      } = value;
-      const {
-        isMatch,
-        score,
-        indices,
-        hasInverse
-      } = searcher.searchIn(text3);
-      if (isMatch) {
-        matches.push({
-          score,
-          key,
-          value: text3,
-          norm: norm2,
-          indices,
-          hasInverse
-        });
-      }
-    }
-    return matches;
-  }
-};
+  return (text3) => text3.match(DEFAULT_TOKEN) || [];
+}
+function createAnalyzer({ isCaseSensitive = false, ignoreDiacritics = false, tokenize: tokenize4 } = {}) {
+  const tokenizeFn = resolveTokenize(tokenize4);
+  return { tokenize(text3) {
+    if (!isCaseSensitive) text3 = text3.toLowerCase();
+    if (ignoreDiacritics) text3 = stripDiacritics(text3);
+    return tokenizeFn(text3);
+  } };
+}
 var TokenSearch = class {
   static condition(_, options) {
     return options.useTokenSearch;
@@ -16939,14 +16165,11 @@ var TokenSearch = class {
     this.options = options;
     this.analyzer = createAnalyzer({
       isCaseSensitive: options.isCaseSensitive,
-      ignoreDiacritics: options.ignoreDiacritics
+      ignoreDiacritics: options.ignoreDiacritics,
+      tokenize: options.tokenize
     });
     const queryTerms = this.analyzer.tokenize(pattern);
-    const invertedIndex = options._invertedIndex;
-    const {
-      df,
-      fieldCount
-    } = invertedIndex;
+    const { df, fieldCount } = options._invertedIndex;
     this.termSearchers = [];
     this.idfWeights = [];
     for (const term of queryTerms) {
@@ -16965,18 +16188,21 @@ var TokenSearch = class {
       const idf = Math.log(1 + (fieldCount - docFreq + 0.5) / (docFreq + 0.5));
       this.idfWeights.push(idf);
     }
+    this.combineAll = options.tokenMatch === "all";
+    this.numTerms = this.termSearchers.length;
+    this.useMask = this.numTerms <= 31;
   }
   searchIn(text3) {
-    if (!this.termSearchers.length) {
-      return {
-        isMatch: false,
-        score: 1
-      };
-    }
+    if (!this.termSearchers.length) return {
+      isMatch: false,
+      score: 1
+    };
     const allIndices = [];
     let weightedScore = 0;
     let maxPossibleScore = 0;
     let matchedCount = 0;
+    let matchedMask = 0;
+    const matchedTerms = this.combineAll && !this.useMask ? /* @__PURE__ */ new Set() : null;
     for (let i = 0; i < this.termSearchers.length; i++) {
       const result = this.termSearchers[i].searchIn(text3);
       const idf = this.idfWeights[i];
@@ -16984,51 +16210,450 @@ var TokenSearch = class {
       if (result.isMatch) {
         matchedCount++;
         weightedScore += idf * (1 - result.score);
-        if (result.indices) {
-          allIndices.push(...result.indices);
-        }
+        if (result.indices) allIndices.push(...result.indices);
+        if (this.combineAll) if (this.useMask) matchedMask |= 1 << i;
+        else matchedTerms.add(i);
       }
     }
-    if (matchedCount === 0) {
-      return {
-        isMatch: false,
-        score: 1
-      };
-    }
+    if (matchedCount === 0) return {
+      isMatch: false,
+      score: 1
+    };
     const normalized = maxPossibleScore > 0 ? 1 - weightedScore / maxPossibleScore : 0;
     const searchResult = {
       isMatch: true,
       score: Math.max(1e-3, normalized)
     };
-    if (this.options.includeMatches && allIndices.length) {
-      searchResult.indices = mergeIndices(allIndices);
+    if (this.options.includeMatches && allIndices.length) searchResult.indices = mergeIndices(allIndices);
+    if (this.combineAll) {
+      if (this.useMask) searchResult.matchedMask = matchedMask;
+      else searchResult.matchedTerms = matchedTerms;
+      searchResult.termCount = this.numTerms;
     }
     return searchResult;
   }
 };
-Fuse.version = "7.3.0";
+function addField(index, text3, docIdx, analyzer) {
+  const tokens2 = analyzer.tokenize(text3);
+  if (!tokens2.length) return;
+  index.fieldCount++;
+  index.docFieldCount.set(docIdx, (index.docFieldCount.get(docIdx) || 0) + 1);
+  const distinctTerms = new Set(tokens2);
+  let perDocTerms = index.docTermFieldHits.get(docIdx);
+  if (!perDocTerms) {
+    perDocTerms = /* @__PURE__ */ new Map();
+    index.docTermFieldHits.set(docIdx, perDocTerms);
+  }
+  for (const term of distinctTerms) {
+    perDocTerms.set(term, (perDocTerms.get(term) || 0) + 1);
+    index.df.set(term, (index.df.get(term) || 0) + 1);
+  }
+}
+function ingestRecord(index, record3, keyCount, analyzer) {
+  const { i: docIdx, v, $: fields } = record3;
+  if (v !== void 0) {
+    addField(index, v, docIdx, analyzer);
+    return;
+  }
+  if (!fields) return;
+  for (let keyIdx = 0; keyIdx < keyCount; keyIdx++) {
+    const value = fields[keyIdx];
+    if (!value) continue;
+    if (Array.isArray(value)) for (const sub of value) addField(index, sub.v, docIdx, analyzer);
+    else addField(index, value.v, docIdx, analyzer);
+  }
+}
+function buildInvertedIndex(records, keyCount, analyzer) {
+  const index = {
+    fieldCount: 0,
+    df: /* @__PURE__ */ new Map(),
+    docFieldCount: /* @__PURE__ */ new Map(),
+    docTermFieldHits: /* @__PURE__ */ new Map()
+  };
+  for (const record3 of records) ingestRecord(index, record3, keyCount, analyzer);
+  return index;
+}
+function addToInvertedIndex(index, record3, keyCount, analyzer) {
+  ingestRecord(index, record3, keyCount, analyzer);
+}
+function removeFromInvertedIndex(index, docIdx) {
+  const fieldCount = index.docFieldCount.get(docIdx);
+  if (fieldCount === void 0) return;
+  index.fieldCount -= fieldCount;
+  index.docFieldCount.delete(docIdx);
+  const perDocTerms = index.docTermFieldHits.get(docIdx);
+  if (!perDocTerms) return;
+  for (const [term, hits] of perDocTerms) {
+    const next = (index.df.get(term) || 0) - hits;
+    if (next <= 0) index.df.delete(term);
+    else index.df.set(term, next);
+  }
+  index.docTermFieldHits.delete(docIdx);
+}
+function removeAndShiftInvertedIndex(index, removedIndices) {
+  if (removedIndices.length === 0) return;
+  const sorted = Array.from(new Set(removedIndices)).sort((a, b) => a - b);
+  for (const idx of sorted) removeFromInvertedIndex(index, idx);
+  const shift = (oldIdx) => {
+    let lo = 0;
+    let hi = sorted.length;
+    while (lo < hi) {
+      const mid = lo + hi >>> 1;
+      if (sorted[mid] < oldIdx) lo = mid + 1;
+      else hi = mid;
+    }
+    return oldIdx - lo;
+  };
+  const firstRemoved = sorted[0];
+  const shiftedDocFieldCount = /* @__PURE__ */ new Map();
+  for (const [oldKey, count] of index.docFieldCount) shiftedDocFieldCount.set(oldKey > firstRemoved ? shift(oldKey) : oldKey, count);
+  index.docFieldCount = shiftedDocFieldCount;
+  const shiftedDocTermFieldHits = /* @__PURE__ */ new Map();
+  for (const [oldKey, terms] of index.docTermFieldHits) shiftedDocTermFieldHits.set(oldKey > firstRemoved ? shift(oldKey) : oldKey, terms);
+  index.docTermFieldHits = shiftedDocTermFieldHits;
+}
+var Fuse = class {
+  constructor(docs, options, index) {
+    this.options = {
+      ...Config,
+      ...options
+    };
+    if (this.options.useExtendedSearch && false) ;
+    if (this.options.useTokenSearch && false) ;
+    this._keyStore = new KeyStore(this.options.keys);
+    this._docs = docs;
+    this._myIndex = null;
+    this._invertedIndex = null;
+    this.setCollection(docs, index);
+    this._lastQuery = null;
+    this._lastSearcher = null;
+  }
+  _getSearcher(query) {
+    if (this._lastQuery === query) return this._lastSearcher;
+    const searcher = createSearcher(query, this._invertedIndex ? {
+      ...this.options,
+      _invertedIndex: this._invertedIndex
+    } : this.options);
+    this._lastQuery = query;
+    this._lastSearcher = searcher;
+    return searcher;
+  }
+  setCollection(docs, index) {
+    this._docs = docs;
+    if (index && !(index instanceof FuseIndex)) throw new Error(INCORRECT_INDEX_TYPE);
+    this._myIndex = index || createIndex(this.options.keys, this._docs, {
+      getFn: this.options.getFn,
+      fieldNormWeight: this.options.fieldNormWeight
+    });
+    if (this.options.useTokenSearch) {
+      const analyzer = createAnalyzer({
+        isCaseSensitive: this.options.isCaseSensitive,
+        ignoreDiacritics: this.options.ignoreDiacritics,
+        tokenize: this.options.tokenize
+      });
+      this._invertedIndex = buildInvertedIndex(this._myIndex.records, this._myIndex.keys.length, analyzer);
+    }
+    this._invalidateSearcherCache();
+  }
+  add(doc) {
+    if (!isDefined(doc)) return;
+    this._docs.push(doc);
+    const record3 = this._myIndex.add(doc, this._docs.length - 1);
+    if (this._invertedIndex && record3) {
+      const analyzer = createAnalyzer({
+        isCaseSensitive: this.options.isCaseSensitive,
+        ignoreDiacritics: this.options.ignoreDiacritics,
+        tokenize: this.options.tokenize
+      });
+      addToInvertedIndex(this._invertedIndex, record3, this._myIndex.keys.length, analyzer);
+    }
+    this._invalidateSearcherCache();
+  }
+  remove(predicate = () => false) {
+    const results = [];
+    const indicesToRemove = [];
+    for (let i = 0, len = this._docs.length; i < len; i += 1) if (predicate(this._docs[i], i)) {
+      results.push(this._docs[i]);
+      indicesToRemove.push(i);
+    }
+    if (indicesToRemove.length) {
+      if (this._invertedIndex) removeAndShiftInvertedIndex(this._invertedIndex, indicesToRemove);
+      const toRemove = new Set(indicesToRemove);
+      this._docs = this._docs.filter((_, i) => !toRemove.has(i));
+      this._myIndex.removeAll(indicesToRemove);
+      this._invalidateSearcherCache();
+    }
+    return results;
+  }
+  removeAt(idx) {
+    if (!Number.isInteger(idx) || idx < 0 || idx >= this._docs.length) throw new Error(INVALID_DOC_INDEX);
+    if (this._invertedIndex) removeAndShiftInvertedIndex(this._invertedIndex, [idx]);
+    const doc = this._docs.splice(idx, 1)[0];
+    this._myIndex.removeAt(idx);
+    this._invalidateSearcherCache();
+    return doc;
+  }
+  _invalidateSearcherCache() {
+    this._lastQuery = null;
+    this._lastSearcher = null;
+  }
+  getIndex() {
+    return this._myIndex;
+  }
+  _normalizedKeys() {
+    return this._myIndex.keys.map((key) => this._keyStore.get(key.id) || key);
+  }
+  search(query, options) {
+    const { limit = -1 } = options || {};
+    const { includeMatches, includeScore, shouldSort, sortFn, ignoreFieldNorm } = this.options;
+    if (isString(query) && !query.trim()) {
+      let docs = this._docs.map((item, idx) => ({
+        item,
+        refIndex: idx
+      }));
+      if (isNumber(limit) && limit > -1) docs = docs.slice(0, limit);
+      return docs;
+    }
+    const useHeap = shouldSort && isNumber(limit) && limit > 0 && isString(query);
+    const comparator = sortFn;
+    const stable = (a, b) => comparator(a, b) || a.idx - b.idx;
+    let results;
+    if (useHeap) {
+      const heap = new MaxHeap(limit, stable);
+      if (isString(this._docs[0])) this._searchStringList(query, {
+        heap,
+        ignoreFieldNorm
+      });
+      else this._searchObjectList(query, {
+        heap,
+        ignoreFieldNorm
+      });
+      results = heap.extractSorted();
+    } else {
+      results = isString(query) ? isString(this._docs[0]) ? this._searchStringList(query) : this._searchObjectList(query) : this._searchLogical(query);
+      computeScore(results, { ignoreFieldNorm });
+      if (shouldSort) results.sort(isString(query) ? stable : comparator);
+      if (isNumber(limit) && limit > -1) results = results.slice(0, limit);
+    }
+    return format(results, this._docs, {
+      includeMatches,
+      includeScore
+    });
+  }
+  _searchStringList(query, { heap, ignoreFieldNorm } = {}) {
+    const searcher = this._getSearcher(query);
+    const requireAllTokens = this.options.useTokenSearch && this.options.tokenMatch === "all";
+    const { records } = this._myIndex;
+    const results = heap ? null : [];
+    records.forEach(({ v: text3, i: idx, n: norm2 }) => {
+      if (!isDefined(text3)) return;
+      const searchResult = searcher.searchIn(text3);
+      if (searchResult.isMatch) {
+        const match = {
+          score: searchResult.score,
+          value: text3,
+          norm: norm2,
+          indices: searchResult.indices
+        };
+        if (requireAllTokens) {
+          match.matchedMask = searchResult.matchedMask;
+          match.matchedTerms = searchResult.matchedTerms;
+          match.termCount = searchResult.termCount;
+        }
+        const matches = [match];
+        if (!requireAllTokens || this._coversAllTokens(matches)) {
+          const result = {
+            item: text3,
+            idx,
+            matches
+          };
+          if (heap) {
+            result.score = computeScoreSingle(result.matches, { ignoreFieldNorm });
+            heap.insert(result);
+          } else results.push(result);
+        }
+      }
+    });
+    return results;
+  }
+  _searchLogical(query) {
+    const expression = parse(query, this.options);
+    const keys = this._normalizedKeys();
+    const evaluate = (node, item, idx) => {
+      if (!("children" in node)) {
+        const { keyId, searcher } = node;
+        let matches;
+        if (keyId === null) {
+          matches = [];
+          keys.forEach((key, keyIndex) => {
+            matches.push(...this._findMatches({
+              key,
+              value: item[keyIndex],
+              searcher
+            }));
+          });
+        } else matches = this._findMatches({
+          key: this._keyStore.get(keyId),
+          value: this._myIndex.getValueForItemAtKeyId(item, keyId),
+          searcher
+        });
+        if (matches && matches.length) return [{
+          idx,
+          item,
+          matches
+        }];
+        return [];
+      }
+      const { children, operator } = node;
+      const res = [];
+      for (let i = 0, len = children.length; i < len; i += 1) {
+        const child = children[i];
+        const result = evaluate(child, item, idx);
+        if (result.length) res.push(...result);
+        else if (operator === LogicalOperator.AND) return [];
+      }
+      return res;
+    };
+    const records = this._myIndex.records;
+    const resultMap = /* @__PURE__ */ new Map();
+    const results = [];
+    records.forEach(({ $: item, i: idx }) => {
+      if (isDefined(item)) {
+        const expResults = evaluate(expression, item, idx);
+        if (expResults.length) {
+          if (!resultMap.has(idx)) {
+            resultMap.set(idx, {
+              idx,
+              item,
+              matches: []
+            });
+            results.push(resultMap.get(idx));
+          }
+          expResults.forEach(({ matches }) => {
+            resultMap.get(idx).matches.push(...matches);
+          });
+        }
+      }
+    });
+    return results;
+  }
+  _searchObjectList(query, { heap, ignoreFieldNorm } = {}) {
+    const searcher = this._getSearcher(query);
+    const requireAllTokens = this.options.useTokenSearch && this.options.tokenMatch === "all";
+    const { records } = this._myIndex;
+    const keys = this._normalizedKeys();
+    const results = heap ? null : [];
+    records.forEach(({ $: item, i: idx }) => {
+      if (!isDefined(item)) return;
+      const matches = [];
+      let anyKeyFailed = false;
+      let hasInverse = false;
+      keys.forEach((key, keyIndex) => {
+        const keyMatches = this._findMatches({
+          key,
+          value: item[keyIndex],
+          searcher
+        });
+        if (keyMatches.length) {
+          matches.push(...keyMatches);
+          if (keyMatches[0].hasInverse) hasInverse = true;
+        } else anyKeyFailed = true;
+      });
+      if (hasInverse && anyKeyFailed) return;
+      if (matches.length && (!requireAllTokens || this._coversAllTokens(matches))) {
+        const result = {
+          idx,
+          item,
+          matches
+        };
+        if (heap) {
+          result.score = computeScoreSingle(result.matches, { ignoreFieldNorm });
+          heap.insert(result);
+        } else results.push(result);
+      }
+    });
+    return results;
+  }
+  _findMatches({ key, value, searcher }) {
+    if (!isDefined(value)) return [];
+    const matches = [];
+    if (isArray(value)) value.forEach(({ v: text3, i: idx, n: norm2 }) => {
+      if (!isDefined(text3)) return;
+      const searchResult = searcher.searchIn(text3);
+      if (searchResult.isMatch) {
+        const match = {
+          score: searchResult.score,
+          key,
+          value: text3,
+          idx,
+          norm: norm2,
+          indices: searchResult.indices,
+          hasInverse: searchResult.hasInverse
+        };
+        if (searchResult.termCount !== void 0) {
+          match.matchedMask = searchResult.matchedMask;
+          match.matchedTerms = searchResult.matchedTerms;
+          match.termCount = searchResult.termCount;
+        }
+        matches.push(match);
+      }
+    });
+    else {
+      const { v: text3, n: norm2 } = value;
+      const searchResult = searcher.searchIn(text3);
+      if (searchResult.isMatch) {
+        const match = {
+          score: searchResult.score,
+          key,
+          value: text3,
+          norm: norm2,
+          indices: searchResult.indices,
+          hasInverse: searchResult.hasInverse
+        };
+        if (searchResult.termCount !== void 0) {
+          match.matchedMask = searchResult.matchedMask;
+          match.matchedTerms = searchResult.matchedTerms;
+          match.termCount = searchResult.termCount;
+        }
+        matches.push(match);
+      }
+    }
+    return matches;
+  }
+  _coversAllTokens(matches) {
+    const termCount = matches.length ? matches[0].termCount : void 0;
+    if (termCount === void 0) return true;
+    if (termCount <= 31) {
+      let coverage2 = 0;
+      for (let i = 0; i < matches.length; i++) coverage2 |= matches[i].matchedMask || 0;
+      return coverage2 === 2 ** termCount - 1;
+    }
+    const coverage = /* @__PURE__ */ new Set();
+    for (let i = 0; i < matches.length; i++) {
+      const terms = matches[i].matchedTerms;
+      if (terms) for (const t of terms) coverage.add(t);
+    }
+    return coverage.size === termCount;
+  }
+};
+Fuse.version = "7.5.0";
 Fuse.createIndex = createIndex;
 Fuse.parseIndex = parseIndex;
 Fuse.config = Config;
 Fuse.match = function(pattern, text3, options) {
-  const searcher = createSearcher(pattern, {
+  if (options && options.useTokenSearch) throw new Error(FUSE_MATCH_TOKEN_SEARCH_UNSUPPORTED);
+  return createSearcher(pattern, {
     ...Config,
     ...options
-  });
-  return searcher.searchIn(text3);
+  }).searchIn(text3);
 };
-{
-  Fuse.parseQuery = parse;
-}
-{
-  register(ExtendedSearch);
-}
-{
-  register(TokenSearch);
-}
+Fuse.parseQuery = parse;
+register(ExtendedSearch);
+register(TokenSearch);
 Fuse.use = function(...plugins) {
   plugins.forEach((plugin) => register(plugin));
 };
+var entry_default = Fuse;
 
 // src/main/extensions/raycastShim.ts
 init_desktop_runtime();
@@ -17842,8 +17467,7 @@ async function searchStoreExtensions(query) {
   if (!q) {
     return catalog.sort((a, b) => (b.downloadCount ?? 0) - (a.downloadCount ?? 0));
   }
-  const scored = catalog.map((item) => ({ item, score: scoreMatch(item, q) })).filter((entry) => entry.score > 0);
-  const fuse = new Fuse(catalog, {
+  const fuse = new entry_default(catalog, {
     keys: [
       { name: "name", weight: 0.7 },
       { name: "description", weight: 0.3 }
@@ -22741,20 +22365,6 @@ var SearchIndexDatabase = class {
       }
     }
     const result = Array.from(byId.values()).sort((a, b) => b.lexical - a.lexical).slice(0, candidateLimit);
-    if (trimmed === "process kill" || trimmed === "timer stop" || trimmed === "stop timer") {
-      const lines = [];
-      lines.push(
-        `[Search DEBUG] query="${trimmed}" ftsQuery="${ftsQuery}" FTS rows=${rows.length} mapped=${mapped.length} fuzzyRows=${fuzzyRows.length}`
-      );
-      for (const r of result.slice(0, 10)) {
-        lines.push(`  [DEBUG] lex=${r.lexical.toFixed(3)} cat=${r.category} title="${r.title}"`);
-      }
-      try {
-        const fs5 = require("fs");
-        fs5.appendFileSync("/tmp/search_debug.log", lines.join("\n") + "\n\n");
-      } catch {
-      }
-    }
     return result;
   }
   fuzzySearch(query, limit) {
@@ -23464,7 +23074,7 @@ function buildNativeCommandDocuments() {
     updatedAt: now
   }));
 }
-function buildRaymesSurfaceDocuments() {
+function buildTezbarSurfaceDocuments() {
   const now = Date.now();
   const extensionsSurfaceTitle = process.platform === "win32" ? "Loved Extensions" : "Extensions Store";
   const extensionsSurfaceSubtitle = process.platform === "win32" ? "Browse Tezbar-recommended GitHub extensions" : "Browse and install extensions";
@@ -23531,7 +23141,7 @@ function buildRaymesSurfaceDocuments() {
 var commandsProvider = {
   providerId: "commands",
   async buildDocuments() {
-    return [...buildRaymesSurfaceDocuments(), ...buildNativeCommandDocuments()];
+    return [...buildTezbarSurfaceDocuments(), ...buildNativeCommandDocuments()];
   }
 };
 
@@ -28483,7 +28093,7 @@ function extensionFromMime(mime) {
   return "bin";
 }
 async function findWhisperCliModel() {
-  const envPath = process.env["RAYMES_WHISPER_MODEL"];
+  const envPath = process.env["TEZBAR_WHISPER_MODEL"] || process.env["RAYMES_WHISPER_MODEL"];
   if (envPath && (0, import_node_fs29.existsSync)(envPath)) return envPath;
   const selected = readSelectedModelId();
   const selectedModel = findModel(selected);
@@ -28515,7 +28125,7 @@ function envPositiveInt(name) {
   return Number.isFinite(parsed) && parsed > 0 ? parsed : null;
 }
 function whisperThreadCount() {
-  return envPositiveInt("RAYMES_WHISPER_THREADS") ?? Math.max(4, Math.min((0, import_node_os14.cpus)().length, 12));
+  return envPositiveInt("TEZBAR_WHISPER_THREADS") ?? envPositiveInt("RAYMES_WHISPER_THREADS") ?? Math.max(4, Math.min((0, import_node_os14.cpus)().length, 12));
 }
 async function runWhisperCli(wavPath, language) {
   const binary = await hasBinary("whisper-cli") ? "whisper-cli" : await hasBinary("whisper-cpp") ? "whisper-cpp" : null;
@@ -30808,7 +30418,8 @@ function registerIpcHandlers(getWindow, controls) {
     ...LLM_DEFAULTS,
     ...readLLMConfig(),
     ...readRawConfig(),
-    raymesHotkey: getRaymesHotkey(),
+    tezbarHotkey: getTezbarHotkey(),
+    raymesHotkey: getTezbarHotkey(),
     uiStateRetentionMs: getUiStateRetentionMs(),
     extensionRuntimeTimeoutMs: getExtensionRuntimeTimeoutMs(),
     aiModeTimeoutMs: getCommandSurfaceTimeoutMs("aiModeTimeoutMs"),
@@ -30817,7 +30428,8 @@ function registerIpcHandlers(getWindow, controls) {
   ipcMain.handle("llm-config-set", async (_event, patch) => {
     if (!patch || typeof patch !== "object") return;
     const configPatch = { ...patch };
-    const requestedHotkey = configPatch.raymesHotkey;
+    const requestedHotkey = typeof configPatch.tezbarHotkey === "string" ? configPatch.tezbarHotkey : typeof configPatch.raymesHotkey === "string" ? configPatch.raymesHotkey : void 0;
+    delete configPatch.tezbarHotkey;
     delete configPatch.raymesHotkey;
     const broadcast = () => {
       for (const win of BrowserWindow.getAllWindows()) {
@@ -30828,8 +30440,9 @@ function registerIpcHandlers(getWindow, controls) {
         }
       }
     };
-    if (typeof requestedHotkey === "string" && controls?.updateRaymesHotkey) {
-      const result = controls.updateRaymesHotkey(requestedHotkey);
+    const updater = controls?.updateTezbarHotkey ?? controls?.updateRaymesHotkey;
+    if (typeof requestedHotkey === "string" && updater) {
+      const result = updater(requestedHotkey);
       if (!result.ok) return result;
       if (Object.keys(configPatch).length > 0) writeConfigPatch(configPatch);
       invalidateProviderCache();
@@ -31839,7 +31452,7 @@ function materializePiPolicy() {
     const runtimeDir = (0, import_node_path35.join)(root, "runtime");
     const extensionPath = (0, import_node_path35.join)(runtimeDir, "raymes-pi-policy.ts");
     (0, import_node_fs33.mkdirSync)(runtimeDir, { recursive: true });
-    (0, import_node_fs33.writeFileSync)(extensionPath, "import { Type } from '@earendil-works/pi-ai'\n\ntype ToolCallEvent = {\n  toolName: string\n  input?: Record<string, unknown> & { command?: unknown }\n}\n\ntype ToolCallResult = {\n  block?: boolean\n  reason?: string\n}\n\ntype ExtensionContext = {\n  ui: {\n    confirm(title: string, message: string, opts?: { timeoutMs?: number }): Promise<boolean>\n  }\n}\n\ntype ExtensionAPI = {\n  on(\n    event: 'tool_call',\n    handler: (\n      event: ToolCallEvent,\n      ctx: ExtensionContext\n    ) => ToolCallResult | undefined | Promise<ToolCallResult | undefined>\n  ): void\n  registerProvider(name: string, config: RaymesPiProviderConfig): void\n  registerTool(definition: {\n    name: string\n    label: string\n    description: string\n    promptSnippet?: string\n    promptGuidelines?: string[]\n    parameters: unknown\n    execute: (\n      toolCallId: string,\n      params: { query?: string; limit?: number; resultId?: string; maxChars?: number },\n      signal?: AbortSignal\n    ) => Promise<{ content: Array<{ type: 'text'; text: string }>; details: unknown }>\n  }): void\n}\n\ntype RaymesPiProviderConfig = {\n  baseUrl: string\n  apiKey: string\n  api: 'openai-completions' | 'anthropic-messages'\n  authHeader?: boolean\n  models: Array<{\n    id: string\n    name: string\n    reasoning: boolean\n    input: Array<'text' | 'image'>\n    cost: {\n      input: number\n      output: number\n      cacheRead: number\n      cacheWrite: number\n    }\n    contextWindow: number\n    maxTokens: number\n    compat?: Record<string, unknown>\n  }>\n}\n\nconst TOKENROUTER_BASE_URL = 'https://api.tokenrouter.com/v1'\nconst TOKENROUTER_MODEL_ID = 'moonshotai/kimi-k3-free'\n\nfunction registerTokenRouterProvider(pi: ExtensionAPI): void {\n  pi.registerProvider('tokenrouter', {\n    baseUrl: TOKENROUTER_BASE_URL,\n    apiKey: '$TOKENROUTER_API_KEY',\n    authHeader: true,\n    api: 'openai-completions',\n    models: [\n      {\n        id: TOKENROUTER_MODEL_ID,\n        name: 'Kimi K3 Free (TokenRouter)',\n        reasoning: false,\n        input: ['text'],\n        cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },\n        contextWindow: 128000,\n        maxTokens: 8192,\n        compat: {\n          supportsStore: false,\n          supportsDeveloperRole: false,\n          supportsReasoningEffort: false,\n          maxTokensField: 'max_tokens',\n        },\n      },\n    ],\n  })\n}\n\nfunction registerRaymesProvider(pi: ExtensionAPI): void {\n  const raw = process.env['RAYMES_PI_PROVIDER_JSON']\n  if (!raw) return\n  try {\n    const parsed = JSON.parse(raw) as RaymesPiProviderConfig\n    if (!parsed.baseUrl || !parsed.apiKey || !parsed.api || !Array.isArray(parsed.models)) return\n    pi.registerProvider('tezbar', parsed)\n  } catch {\n    /* Ignore malformed bridge env so pi can still start with its own config. */\n  }\n}\n\nfunction hasUnsafeShellSyntax(command: string): boolean {\n  return /[;|<>`\\n]/.test(command) || command.includes('$(') || command.includes('||')\n}\n\nfunction persistedAllowedCommands(): Set<string> {\n  const raw = process.env['RAYMES_PI_ALWAYS_ALLOW_JSON']\n  if (!raw) return new Set()\n  try {\n    const parsed = JSON.parse(raw) as unknown\n    if (!Array.isArray(parsed)) return new Set()\n    return new Set(\n      parsed\n        .filter(\n          (entry): entry is string =>\n            typeof entry === 'string' && /^[a-z0-9][a-z0-9._+-]{0,63}$/i.test(entry)\n        )\n        .map((entry) => entry.toLowerCase())\n    )\n  } catch {\n    return new Set()\n  }\n}\n\nfunction persistedAllowedExactCommands(): Set<string> {\n  const raw = process.env['RAYMES_PI_ALWAYS_ALLOW_EXACT_JSON']\n  if (!raw) return new Set()\n  try {\n    const parsed = JSON.parse(raw) as unknown\n    if (!Array.isArray(parsed)) return new Set()\n    return new Set(\n      parsed\n        .filter((entry): entry is string => typeof entry === 'string')\n        .map((entry) => entry.trim())\n        .filter((entry) => entry && entry.length <= 16_384 && !entry.includes('\\0'))\n    )\n  } catch {\n    return new Set()\n  }\n}\n\nfunction executableName(command: string): string {\n  const token = command.trim().split(/\\s+/, 1)[0] ?? ''\n  return token.slice(token.lastIndexOf('/') + 1).toLowerCase()\n}\n\nconst SAFE_PIPELINE_COMMANDS = new Set(['ps', 'head', 'tail', 'wc'])\n\nexport function isPersistentlyAllowedBash(\n  command: string,\n  allowedCommands: ReadonlySet<string>\n): boolean {\n  const trimmed = command.trim()\n  if (!trimmed || /[;<>`\\n]/.test(trimmed) || trimmed.includes('$(') || trimmed.includes('||')) {\n    return false\n  }\n\n  const commands = trimmed\n    .split(/\\s*(?:&&|\\|)\\s*/)\n    .map((part) => part.trim())\n    .filter(Boolean)\n  if (commands.length === 0) return false\n\n  return commands.every((part) => {\n    if (isSimpleCd(part)) return true\n    const executable = executableName(part)\n    return SAFE_PIPELINE_COMMANDS.has(executable) || allowedCommands.has(executable)\n  })\n}\n\nfunction isSimpleCd(command: string): boolean {\n  return /^cd\\s+(?:\"[^\"]+\"|'[^']+'|[~./A-Za-z0-9_ -]+)$/.test(command.trim())\n}\n\nfunction isSafeGitStatus(command: string): boolean {\n  return /^git\\s+status(?:\\s+[^;&|<>`$()\\n]+)*$/.test(command.trim())\n}\n\nfunction isSafeGitClone(command: string): boolean {\n  return /^git\\s+clone(?:\\s+[^;&|<>`$()\\n]+)+$/.test(command.trim())\n}\n\nfunction isSafeDirectoryRead(command: string): boolean {\n  const trimmed = command.trim()\n  return (\n    trimmed === 'pwd' ||\n    /^ls(?:\\s+-[A-Za-z0-9@]+)*(?:\\s+(?:\"[^\"]+\"|'[^']+'|[~./A-Za-z0-9_ -]+))*$/.test(trimmed) ||\n    /^which\\s+[-A-Za-z0-9_ .+/]+$/.test(trimmed) ||\n    /^command\\s+-v\\s+[-A-Za-z0-9_ .+/]+$/.test(trimmed) ||\n    /^find\\s+(?:\\/Applications|~\\/Applications)(?:\\s+[^;&|<>`$()\\n]+)*$/.test(trimmed) ||\n    /^mdfind\\s+[^;&|<>`$()\\n]+$/.test(trimmed)\n  )\n}\n\nexport type IndexedSearchKind = 'launcher' | 'deep'\n\nconst MAJOR_HOME_FOLDER_PATTERN =\n  /(?:~|\\$HOME|\\/Users\\/[^/\\s\"']+)\\/(Desktop|Documents|Downloads|Pictures|Movies|Music|Library|code)(?=\\/|\\s|$)/gi\n\nfunction hasBroadHomeScope(command: string): boolean {\n  if (/(?:^|\\s)(?:~|\\$HOME|\\/Users\\/[^/\\s\"']+)(?=\\s|$|[|&;<>])/.test(command)) {\n    return true\n  }\n\n  const roots = new Set<string>()\n  for (const match of command.matchAll(MAJOR_HOME_FOLDER_PATTERN)) {\n    const root = match[1]?.toLowerCase()\n    if (root) roots.add(root)\n  }\n  return roots.size >= 2\n}\n\n/**\n * Keep broad personal-file discovery on Tezbar's indexes. Narrow searches\n * inside the active project remain valid shell work.\n */\nexport function preferredIndexedSearchForBash(command: string): IndexedSearchKind | null {\n  const trimmed = command.trim()\n  if (!trimmed) return null\n  if (/^(?:\\/usr\\/bin\\/)?mdfind\\b/i.test(trimmed)) return 'launcher'\n  if (!hasBroadHomeScope(trimmed)) return null\n\n  if (\n    /(?:^|[|&;]\\s*)(?:\\S+\\/)?(?:grep|rg|ag|ack)\\b/i.test(trimmed) ||\n    (/^(?:\\S+\\/)?find\\b/i.test(trimmed) && /-exec\\b[\\s\\S]*(?:grep|rg|ag|ack)\\b/i.test(trimmed))\n  ) {\n    return 'deep'\n  }\n  if (/^(?:\\S+\\/)?find\\b/i.test(trimmed)) return 'launcher'\n  return null\n}\n\nexport function isAutoAllowedBash(\n  command: string,\n  allowedCommands: ReadonlySet<string> = persistedAllowedCommands(),\n  allowedExactCommands: ReadonlySet<string> = persistedAllowedExactCommands()\n): boolean {\n  const trimmed = command.trim()\n  if (!trimmed) return false\n  if (allowedExactCommands.has(trimmed)) return true\n  if (isPersistentlyAllowedBash(trimmed, allowedCommands)) return true\n  if (hasUnsafeShellSyntax(trimmed)) return false\n\n  const parts = trimmed\n    .split(/\\s+&&\\s+/)\n    .map((part) => part.trim())\n    .filter(Boolean)\n  if (parts.length === 0) return false\n\n  const commandToRun = parts[parts.length - 1]\n  if (\n    !commandToRun ||\n    !(\n      isSafeGitStatus(commandToRun) ||\n      isSafeGitClone(commandToRun) ||\n      isSafeDirectoryRead(commandToRun)\n    )\n  ) {\n    return false\n  }\n\n  return parts.slice(0, -1).every(isSimpleCd)\n}\n\nexport default function raymesPiPolicy(pi: ExtensionAPI): void {\n  registerTokenRouterProvider(pi)\n  registerRaymesProvider(pi)\n\n  const knowledgeEndpoint = process.env['TEZBAR_KNOWLEDGE_ENDPOINT']\n  const knowledgeToken = process.env['TEZBAR_KNOWLEDGE_TOKEN']\n  const hasIndexedSearchTools = Boolean(\n    knowledgeEndpoint &&\n    knowledgeToken &&\n    /^http:\\/\\/127\\.0\\.0\\.1:\\d+\\/search$/.test(knowledgeEndpoint)\n  )\n  let launcherSearchAttempted = false\n  let deepSearchAttempted = false\n\n  if (knowledgeEndpoint && knowledgeToken && hasIndexedSearchTools) {\n    pi.registerTool({\n      name: 'launcher_search',\n      label: 'Search Tezbar',\n      description:\n        'Fast indexed Tezbar search for local files, folders, applications, commands, clipboard items, notes, snippets, and links by name or metadata.',\n      promptSnippet: \"Search Tezbar's normal launcher index for local items by name or metadata\",\n      promptGuidelines: [\n        'Use launcher_search first when the user asks to find a local file, folder, application, command, clipboard item, note, snippet, or link by name or metadata.',\n        'Do not use find, mdfind, or a recursive home-folder shell scan before launcher_search.',\n        'Use pc_search instead when the user is looking for text inside a document, PDF, screenshot, or image.',\n      ],\n      parameters: Type.Object({\n        query: Type.String({\n          description: 'The file, app, command, note, or other local item to find',\n        }),\n        limit: Type.Optional(\n          Type.Number({ minimum: 1, maximum: 20, description: 'Maximum results (default 10)' })\n        ),\n      }),\n      async execute(_toolCallId, params, signal) {\n        const response = await fetch(knowledgeEndpoint.replace(/\\/search$/, '/launcher-search'), {\n          method: 'POST',\n          headers: {\n            Authorization: `Bearer ${knowledgeToken}`,\n            'Content-Type': 'application/json',\n          },\n          body: JSON.stringify({ query: params.query ?? '', limit: params.limit ?? 10 }),\n          signal,\n        })\n        const payload = (await response.json()) as {\n          results?: Array<{\n            id: string\n            title: string\n            subtitle: string\n            category: string\n            score: number\n            target?: string\n          }>\n          error?: string\n        }\n        if (!response.ok) throw new Error(payload.error || 'Tezbar search failed')\n        const results = payload.results ?? []\n        const text =\n          results.length === 0\n            ? 'No Tezbar launcher results matched this query.'\n            : results\n                .map((result, index) => {\n                  const target = result.target ? `\\nTarget: ${result.target}` : ''\n                  return `${index + 1}. [${result.category}] ${result.title}\\n${result.subtitle}${target}`\n                })\n                .join('\\n\\n')\n        return { content: [{ type: 'text', text }], details: { results } }\n      },\n    })\n\n    pi.registerTool({\n      name: 'pc_search',\n      label: 'Deep Search PC Knowledge',\n      description:\n        'Searches the user-approved, locally indexed Tezbar knowledge folders. Returns matching source paths, page numbers, and excerpts.',\n      promptSnippet:\n        'Deep Search inside user-approved local documents, PDFs, screenshots, images, and notes indexed by Tezbar',\n      promptGuidelines: [\n        'Use pc_search first when the user asks to find text or information inside their documents, PDFs, screenshots, images, or knowledge folders.',\n        'Do not use grep, rg, find, or a recursive home-folder shell scan before pc_search.',\n        'Use pc_read with a returned result ID when more surrounding content is needed.',\n        'Cite the source path and page number returned by pc_search when answering from indexed knowledge.',\n      ],\n      parameters: Type.Object({\n        query: Type.String({ description: 'A focused natural-language or keyword search query' }),\n        limit: Type.Optional(\n          Type.Number({ minimum: 1, maximum: 20, description: 'Maximum results (default 8)' })\n        ),\n      }),\n      async execute(_toolCallId, params, signal) {\n        const response = await fetch(knowledgeEndpoint, {\n          method: 'POST',\n          headers: {\n            Authorization: `Bearer ${knowledgeToken}`,\n            'Content-Type': 'application/json',\n          },\n          body: JSON.stringify({ query: params.query ?? '', limit: params.limit ?? 8 }),\n          signal,\n        })\n        const result = (await response.json()) as {\n          hits?: Array<{\n            chunkId: string\n            path: string\n            pageNumber?: number\n            text: string\n            score: number\n          }>\n          error?: string\n        }\n        if (!response.ok) throw new Error(result.error || 'Knowledge search failed')\n        const hits = result.hits ?? []\n        const text =\n          hits.length === 0\n            ? 'No indexed knowledge matched this query.'\n            : hits\n                .map((hit, index) => {\n                  const page = hit.pageNumber ? ` (page ${hit.pageNumber})` : ''\n                  return `${index + 1}. [${hit.chunkId}] ${hit.path}${page}\\n${hit.text}`\n                })\n                .join('\\n\\n')\n        return { content: [{ type: 'text', text }], details: { hits } }\n      },\n    })\n\n    pi.registerTool({\n      name: 'pc_read',\n      label: 'Read PC Knowledge Result',\n      description:\n        'Reads additional nearby content for one result returned by pc_search. It can only access content from user-approved active knowledge folders.',\n      parameters: Type.Object({\n        resultId: Type.String({ description: 'The result ID returned by pc_search' }),\n        maxChars: Type.Optional(\n          Type.Number({\n            minimum: 500,\n            maximum: 50_000,\n            description: 'Maximum text characters to return',\n          })\n        ),\n      }),\n      async execute(_toolCallId, params, signal) {\n        const response = await fetch(knowledgeEndpoint.replace(/\\/search$/, '/read'), {\n          method: 'POST',\n          headers: {\n            Authorization: `Bearer ${knowledgeToken}`,\n            'Content-Type': 'application/json',\n          },\n          body: JSON.stringify({\n            resultId: params.resultId ?? '',\n            maxChars: params.maxChars ?? 12_000,\n          }),\n          signal,\n        })\n        const payload = (await response.json()) as {\n          result?: { path: string; pageNumber?: number; text: string }\n          error?: string\n        }\n        if (!response.ok || !payload.result) {\n          throw new Error(payload.error || 'Knowledge result could not be read')\n        }\n        const page = payload.result.pageNumber ? ` (page ${payload.result.pageNumber})` : ''\n        return {\n          content: [\n            { type: 'text', text: `${payload.result.path}${page}\\n\\n${payload.result.text}` },\n          ],\n          details: payload.result,\n        }\n      },\n    })\n  }\n\n  pi.on('tool_call', async (event, ctx) => {\n    if (event.toolName === 'launcher_search') {\n      launcherSearchAttempted = true\n      return undefined\n    }\n    if (event.toolName === 'pc_search') {\n      deepSearchAttempted = true\n      return undefined\n    }\n    if (event.toolName !== 'bash') return undefined\n\n    const command = event.input?.command\n    if (typeof command !== 'string') {\n      return { block: true, reason: 'Missing bash command.' }\n    }\n\n    if (hasIndexedSearchTools) {\n      const preferredSearch = preferredIndexedSearchForBash(command)\n      if (preferredSearch === 'deep' && !deepSearchAttempted) {\n        return {\n          block: true,\n          reason:\n            'Use pc_search (Tezbar Deep Search) before recursively scanning personal files with grep/rg. Shell is only a fallback after Deep Search.',\n        }\n      }\n      if (preferredSearch === 'launcher' && !launcherSearchAttempted) {\n        return {\n          block: true,\n          reason:\n            'Use launcher_search (Tezbar normal search) before broadly scanning personal folders with find/mdfind. Shell is only a fallback after indexed search.',\n        }\n      }\n    }\n\n    if (isAutoAllowedBash(command)) return undefined\n\n    const confirmed = await ctx.ui.confirm('Run bash command?', command)\n    if (confirmed) return undefined\n\n    return { block: true, reason: 'Bash command was not approved.' }\n  })\n}\n", "utf8");
+    (0, import_node_fs33.writeFileSync)(extensionPath, "import { Type } from '@earendil-works/pi-ai'\r\n\r\ntype ToolCallEvent = {\r\n  toolName: string\r\n  input?: Record<string, unknown> & { command?: unknown }\r\n}\r\n\r\ntype ToolCallResult = {\r\n  block?: boolean\r\n  reason?: string\r\n}\r\n\r\ntype ExtensionContext = {\r\n  ui: {\r\n    confirm(title: string, message: string, opts?: { timeoutMs?: number }): Promise<boolean>\r\n  }\r\n}\r\n\r\ntype ExtensionAPI = {\r\n  on(\r\n    event: 'tool_call',\r\n    handler: (\r\n      event: ToolCallEvent,\r\n      ctx: ExtensionContext\r\n    ) => ToolCallResult | undefined | Promise<ToolCallResult | undefined>\r\n  ): void\r\n  registerProvider(name: string, config: RaymesPiProviderConfig): void\r\n  registerTool(definition: {\r\n    name: string\r\n    label: string\r\n    description: string\r\n    promptSnippet?: string\r\n    promptGuidelines?: string[]\r\n    parameters: unknown\r\n    execute: (\r\n      toolCallId: string,\r\n      params: { query?: string; limit?: number; resultId?: string; maxChars?: number },\r\n      signal?: AbortSignal\r\n    ) => Promise<{ content: Array<{ type: 'text'; text: string }>; details: unknown }>\r\n  }): void\r\n}\r\n\r\ntype RaymesPiProviderConfig = {\r\n  baseUrl: string\r\n  apiKey: string\r\n  api: 'openai-completions' | 'anthropic-messages'\r\n  authHeader?: boolean\r\n  models: Array<{\r\n    id: string\r\n    name: string\r\n    reasoning: boolean\r\n    input: Array<'text' | 'image'>\r\n    cost: {\r\n      input: number\r\n      output: number\r\n      cacheRead: number\r\n      cacheWrite: number\r\n    }\r\n    contextWindow: number\r\n    maxTokens: number\r\n    compat?: Record<string, unknown>\r\n  }>\r\n}\r\n\r\nconst TOKENROUTER_BASE_URL = 'https://api.tokenrouter.com/v1'\r\nconst TOKENROUTER_MODEL_ID = 'moonshotai/kimi-k3-free'\r\n\r\nfunction registerTokenRouterProvider(pi: ExtensionAPI): void {\r\n  pi.registerProvider('tokenrouter', {\r\n    baseUrl: TOKENROUTER_BASE_URL,\r\n    apiKey: '$TOKENROUTER_API_KEY',\r\n    authHeader: true,\r\n    api: 'openai-completions',\r\n    models: [\r\n      {\r\n        id: TOKENROUTER_MODEL_ID,\r\n        name: 'Kimi K3 Free (TokenRouter)',\r\n        reasoning: false,\r\n        input: ['text'],\r\n        cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },\r\n        contextWindow: 128000,\r\n        maxTokens: 8192,\r\n        compat: {\r\n          supportsStore: false,\r\n          supportsDeveloperRole: false,\r\n          supportsReasoningEffort: false,\r\n          maxTokensField: 'max_tokens',\r\n        },\r\n      },\r\n    ],\r\n  })\r\n}\r\n\r\nfunction registerRaymesProvider(pi: ExtensionAPI): void {\r\n  const raw = process.env['RAYMES_PI_PROVIDER_JSON']\r\n  if (!raw) return\r\n  try {\r\n    const parsed = JSON.parse(raw) as RaymesPiProviderConfig\r\n    if (!parsed.baseUrl || !parsed.apiKey || !parsed.api || !Array.isArray(parsed.models)) return\r\n    pi.registerProvider('tezbar', parsed)\r\n  } catch {\r\n    /* Ignore malformed bridge env so pi can still start with its own config. */\r\n  }\r\n}\r\n\r\nfunction hasUnsafeShellSyntax(command: string): boolean {\r\n  return /[;|<>`\\n]/.test(command) || command.includes('$(') || command.includes('||')\r\n}\r\n\r\nfunction persistedAllowedCommands(): Set<string> {\r\n  const raw = process.env['RAYMES_PI_ALWAYS_ALLOW_JSON']\r\n  if (!raw) return new Set()\r\n  try {\r\n    const parsed = JSON.parse(raw) as unknown\r\n    if (!Array.isArray(parsed)) return new Set()\r\n    return new Set(\r\n      parsed\r\n        .filter(\r\n          (entry): entry is string =>\r\n            typeof entry === 'string' && /^[a-z0-9][a-z0-9._+-]{0,63}$/i.test(entry)\r\n        )\r\n        .map((entry) => entry.toLowerCase())\r\n    )\r\n  } catch {\r\n    return new Set()\r\n  }\r\n}\r\n\r\nfunction persistedAllowedExactCommands(): Set<string> {\r\n  const raw = process.env['RAYMES_PI_ALWAYS_ALLOW_EXACT_JSON']\r\n  if (!raw) return new Set()\r\n  try {\r\n    const parsed = JSON.parse(raw) as unknown\r\n    if (!Array.isArray(parsed)) return new Set()\r\n    return new Set(\r\n      parsed\r\n        .filter((entry): entry is string => typeof entry === 'string')\r\n        .map((entry) => entry.trim())\r\n        .filter((entry) => entry && entry.length <= 16_384 && !entry.includes('\\0'))\r\n    )\r\n  } catch {\r\n    return new Set()\r\n  }\r\n}\r\n\r\nfunction executableName(command: string): string {\r\n  const token = command.trim().split(/\\s+/, 1)[0] ?? ''\r\n  return token.slice(token.lastIndexOf('/') + 1).toLowerCase()\r\n}\r\n\r\nconst SAFE_PIPELINE_COMMANDS = new Set(['ps', 'head', 'tail', 'wc'])\r\n\r\nexport function isPersistentlyAllowedBash(\r\n  command: string,\r\n  allowedCommands: ReadonlySet<string>\r\n): boolean {\r\n  const trimmed = command.trim()\r\n  if (!trimmed || /[;<>`\\n]/.test(trimmed) || trimmed.includes('$(') || trimmed.includes('||')) {\r\n    return false\r\n  }\r\n\r\n  const commands = trimmed\r\n    .split(/\\s*(?:&&|\\|)\\s*/)\r\n    .map((part) => part.trim())\r\n    .filter(Boolean)\r\n  if (commands.length === 0) return false\r\n\r\n  return commands.every((part) => {\r\n    if (isSimpleCd(part)) return true\r\n    const executable = executableName(part)\r\n    return SAFE_PIPELINE_COMMANDS.has(executable) || allowedCommands.has(executable)\r\n  })\r\n}\r\n\r\nfunction isSimpleCd(command: string): boolean {\r\n  return /^cd\\s+(?:\"[^\"]+\"|'[^']+'|[~./A-Za-z0-9_ -]+)$/.test(command.trim())\r\n}\r\n\r\nfunction isSafeGitStatus(command: string): boolean {\r\n  return /^git\\s+status(?:\\s+[^;&|<>`$()\\n]+)*$/.test(command.trim())\r\n}\r\n\r\nfunction isSafeGitClone(command: string): boolean {\r\n  return /^git\\s+clone(?:\\s+[^;&|<>`$()\\n]+)+$/.test(command.trim())\r\n}\r\n\r\nfunction isSafeDirectoryRead(command: string): boolean {\r\n  const trimmed = command.trim()\r\n  return (\r\n    trimmed === 'pwd' ||\r\n    /^ls(?:\\s+-[A-Za-z0-9@]+)*(?:\\s+(?:\"[^\"]+\"|'[^']+'|[~./A-Za-z0-9_ -]+))*$/.test(trimmed) ||\r\n    /^which\\s+[-A-Za-z0-9_ .+/]+$/.test(trimmed) ||\r\n    /^command\\s+-v\\s+[-A-Za-z0-9_ .+/]+$/.test(trimmed) ||\r\n    /^find\\s+(?:\\/Applications|~\\/Applications)(?:\\s+[^;&|<>`$()\\n]+)*$/.test(trimmed) ||\r\n    /^mdfind\\s+[^;&|<>`$()\\n]+$/.test(trimmed)\r\n  )\r\n}\r\n\r\nexport type IndexedSearchKind = 'launcher' | 'deep'\r\n\r\nconst MAJOR_HOME_FOLDER_PATTERN =\r\n  /(?:~|\\$HOME|\\/Users\\/[^/\\s\"']+)\\/(Desktop|Documents|Downloads|Pictures|Movies|Music|Library|code)(?=\\/|\\s|$)/gi\r\n\r\nfunction hasBroadHomeScope(command: string): boolean {\r\n  if (/(?:^|\\s)(?:~|\\$HOME|\\/Users\\/[^/\\s\"']+)(?=\\s|$|[|&;<>])/.test(command)) {\r\n    return true\r\n  }\r\n\r\n  const roots = new Set<string>()\r\n  for (const match of command.matchAll(MAJOR_HOME_FOLDER_PATTERN)) {\r\n    const root = match[1]?.toLowerCase()\r\n    if (root) roots.add(root)\r\n  }\r\n  return roots.size >= 2\r\n}\r\n\r\n/**\r\n * Keep broad personal-file discovery on Tezbar's indexes. Narrow searches\r\n * inside the active project remain valid shell work.\r\n */\r\nexport function preferredIndexedSearchForBash(command: string): IndexedSearchKind | null {\r\n  const trimmed = command.trim()\r\n  if (!trimmed) return null\r\n  if (/^(?:\\/usr\\/bin\\/)?mdfind\\b/i.test(trimmed)) return 'launcher'\r\n  if (!hasBroadHomeScope(trimmed)) return null\r\n\r\n  if (\r\n    /(?:^|[|&;]\\s*)(?:\\S+\\/)?(?:grep|rg|ag|ack)\\b/i.test(trimmed) ||\r\n    (/^(?:\\S+\\/)?find\\b/i.test(trimmed) && /-exec\\b[\\s\\S]*(?:grep|rg|ag|ack)\\b/i.test(trimmed))\r\n  ) {\r\n    return 'deep'\r\n  }\r\n  if (/^(?:\\S+\\/)?find\\b/i.test(trimmed)) return 'launcher'\r\n  return null\r\n}\r\n\r\nexport function isAutoAllowedBash(\r\n  command: string,\r\n  allowedCommands: ReadonlySet<string> = persistedAllowedCommands(),\r\n  allowedExactCommands: ReadonlySet<string> = persistedAllowedExactCommands()\r\n): boolean {\r\n  const trimmed = command.trim()\r\n  if (!trimmed) return false\r\n  if (allowedExactCommands.has(trimmed)) return true\r\n  if (isPersistentlyAllowedBash(trimmed, allowedCommands)) return true\r\n  if (hasUnsafeShellSyntax(trimmed)) return false\r\n\r\n  const parts = trimmed\r\n    .split(/\\s+&&\\s+/)\r\n    .map((part) => part.trim())\r\n    .filter(Boolean)\r\n  if (parts.length === 0) return false\r\n\r\n  const commandToRun = parts[parts.length - 1]\r\n  if (\r\n    !commandToRun ||\r\n    !(\r\n      isSafeGitStatus(commandToRun) ||\r\n      isSafeGitClone(commandToRun) ||\r\n      isSafeDirectoryRead(commandToRun)\r\n    )\r\n  ) {\r\n    return false\r\n  }\r\n\r\n  return parts.slice(0, -1).every(isSimpleCd)\r\n}\r\n\r\nexport default function raymesPiPolicy(pi: ExtensionAPI): void {\r\n  registerTokenRouterProvider(pi)\r\n  registerRaymesProvider(pi)\r\n\r\n  const knowledgeEndpoint = process.env['TEZBAR_KNOWLEDGE_ENDPOINT']\r\n  const knowledgeToken = process.env['TEZBAR_KNOWLEDGE_TOKEN']\r\n  const hasIndexedSearchTools = Boolean(\r\n    knowledgeEndpoint &&\r\n    knowledgeToken &&\r\n    /^http:\\/\\/127\\.0\\.0\\.1:\\d+\\/search$/.test(knowledgeEndpoint)\r\n  )\r\n  let launcherSearchAttempted = false\r\n  let deepSearchAttempted = false\r\n\r\n  if (knowledgeEndpoint && knowledgeToken && hasIndexedSearchTools) {\r\n    pi.registerTool({\r\n      name: 'launcher_search',\r\n      label: 'Search Tezbar',\r\n      description:\r\n        'Fast indexed Tezbar search for local files, folders, applications, commands, clipboard items, notes, snippets, and links by name or metadata.',\r\n      promptSnippet: \"Search Tezbar's normal launcher index for local items by name or metadata\",\r\n      promptGuidelines: [\r\n        'Use launcher_search first when the user asks to find a local file, folder, application, command, clipboard item, note, snippet, or link by name or metadata.',\r\n        'Do not use find, mdfind, or a recursive home-folder shell scan before launcher_search.',\r\n        'Use pc_search instead when the user is looking for text inside a document, PDF, screenshot, or image.',\r\n      ],\r\n      parameters: Type.Object({\r\n        query: Type.String({\r\n          description: 'The file, app, command, note, or other local item to find',\r\n        }),\r\n        limit: Type.Optional(\r\n          Type.Number({ minimum: 1, maximum: 20, description: 'Maximum results (default 10)' })\r\n        ),\r\n      }),\r\n      async execute(_toolCallId, params, signal) {\r\n        const response = await fetch(knowledgeEndpoint.replace(/\\/search$/, '/launcher-search'), {\r\n          method: 'POST',\r\n          headers: {\r\n            Authorization: `Bearer ${knowledgeToken}`,\r\n            'Content-Type': 'application/json',\r\n          },\r\n          body: JSON.stringify({ query: params.query ?? '', limit: params.limit ?? 10 }),\r\n          signal,\r\n        })\r\n        const payload = (await response.json()) as {\r\n          results?: Array<{\r\n            id: string\r\n            title: string\r\n            subtitle: string\r\n            category: string\r\n            score: number\r\n            target?: string\r\n          }>\r\n          error?: string\r\n        }\r\n        if (!response.ok) throw new Error(payload.error || 'Tezbar search failed')\r\n        const results = payload.results ?? []\r\n        const text =\r\n          results.length === 0\r\n            ? 'No Tezbar launcher results matched this query.'\r\n            : results\r\n                .map((result, index) => {\r\n                  const target = result.target ? `\\nTarget: ${result.target}` : ''\r\n                  return `${index + 1}. [${result.category}] ${result.title}\\n${result.subtitle}${target}`\r\n                })\r\n                .join('\\n\\n')\r\n        return { content: [{ type: 'text', text }], details: { results } }\r\n      },\r\n    })\r\n\r\n    pi.registerTool({\r\n      name: 'pc_search',\r\n      label: 'Deep Search PC Knowledge',\r\n      description:\r\n        'Searches the user-approved, locally indexed Tezbar knowledge folders. Returns matching source paths, page numbers, and excerpts.',\r\n      promptSnippet:\r\n        'Deep Search inside user-approved local documents, PDFs, screenshots, images, and notes indexed by Tezbar',\r\n      promptGuidelines: [\r\n        'Use pc_search first when the user asks to find text or information inside their documents, PDFs, screenshots, images, or knowledge folders.',\r\n        'Do not use grep, rg, find, or a recursive home-folder shell scan before pc_search.',\r\n        'Use pc_read with a returned result ID when more surrounding content is needed.',\r\n        'Cite the source path and page number returned by pc_search when answering from indexed knowledge.',\r\n      ],\r\n      parameters: Type.Object({\r\n        query: Type.String({ description: 'A focused natural-language or keyword search query' }),\r\n        limit: Type.Optional(\r\n          Type.Number({ minimum: 1, maximum: 20, description: 'Maximum results (default 8)' })\r\n        ),\r\n      }),\r\n      async execute(_toolCallId, params, signal) {\r\n        const response = await fetch(knowledgeEndpoint, {\r\n          method: 'POST',\r\n          headers: {\r\n            Authorization: `Bearer ${knowledgeToken}`,\r\n            'Content-Type': 'application/json',\r\n          },\r\n          body: JSON.stringify({ query: params.query ?? '', limit: params.limit ?? 8 }),\r\n          signal,\r\n        })\r\n        const result = (await response.json()) as {\r\n          hits?: Array<{\r\n            chunkId: string\r\n            path: string\r\n            pageNumber?: number\r\n            text: string\r\n            score: number\r\n          }>\r\n          error?: string\r\n        }\r\n        if (!response.ok) throw new Error(result.error || 'Knowledge search failed')\r\n        const hits = result.hits ?? []\r\n        const text =\r\n          hits.length === 0\r\n            ? 'No indexed knowledge matched this query.'\r\n            : hits\r\n                .map((hit, index) => {\r\n                  const page = hit.pageNumber ? ` (page ${hit.pageNumber})` : ''\r\n                  return `${index + 1}. [${hit.chunkId}] ${hit.path}${page}\\n${hit.text}`\r\n                })\r\n                .join('\\n\\n')\r\n        return { content: [{ type: 'text', text }], details: { hits } }\r\n      },\r\n    })\r\n\r\n    pi.registerTool({\r\n      name: 'pc_read',\r\n      label: 'Read PC Knowledge Result',\r\n      description:\r\n        'Reads additional nearby content for one result returned by pc_search. It can only access content from user-approved active knowledge folders.',\r\n      parameters: Type.Object({\r\n        resultId: Type.String({ description: 'The result ID returned by pc_search' }),\r\n        maxChars: Type.Optional(\r\n          Type.Number({\r\n            minimum: 500,\r\n            maximum: 50_000,\r\n            description: 'Maximum text characters to return',\r\n          })\r\n        ),\r\n      }),\r\n      async execute(_toolCallId, params, signal) {\r\n        const response = await fetch(knowledgeEndpoint.replace(/\\/search$/, '/read'), {\r\n          method: 'POST',\r\n          headers: {\r\n            Authorization: `Bearer ${knowledgeToken}`,\r\n            'Content-Type': 'application/json',\r\n          },\r\n          body: JSON.stringify({\r\n            resultId: params.resultId ?? '',\r\n            maxChars: params.maxChars ?? 12_000,\r\n          }),\r\n          signal,\r\n        })\r\n        const payload = (await response.json()) as {\r\n          result?: { path: string; pageNumber?: number; text: string }\r\n          error?: string\r\n        }\r\n        if (!response.ok || !payload.result) {\r\n          throw new Error(payload.error || 'Knowledge result could not be read')\r\n        }\r\n        const page = payload.result.pageNumber ? ` (page ${payload.result.pageNumber})` : ''\r\n        return {\r\n          content: [\r\n            { type: 'text', text: `${payload.result.path}${page}\\n\\n${payload.result.text}` },\r\n          ],\r\n          details: payload.result,\r\n        }\r\n      },\r\n    })\r\n  }\r\n\r\n  pi.on('tool_call', async (event, ctx) => {\r\n    if (event.toolName === 'launcher_search') {\r\n      launcherSearchAttempted = true\r\n      return undefined\r\n    }\r\n    if (event.toolName === 'pc_search') {\r\n      deepSearchAttempted = true\r\n      return undefined\r\n    }\r\n    if (event.toolName !== 'bash') return undefined\r\n\r\n    const command = event.input?.command\r\n    if (typeof command !== 'string') {\r\n      return { block: true, reason: 'Missing bash command.' }\r\n    }\r\n\r\n    if (hasIndexedSearchTools) {\r\n      const preferredSearch = preferredIndexedSearchForBash(command)\r\n      if (preferredSearch === 'deep' && !deepSearchAttempted) {\r\n        return {\r\n          block: true,\r\n          reason:\r\n            'Use pc_search (Tezbar Deep Search) before recursively scanning personal files with grep/rg. Shell is only a fallback after Deep Search.',\r\n        }\r\n      }\r\n      if (preferredSearch === 'launcher' && !launcherSearchAttempted) {\r\n        return {\r\n          block: true,\r\n          reason:\r\n            'Use launcher_search (Tezbar normal search) before broadly scanning personal folders with find/mdfind. Shell is only a fallback after indexed search.',\r\n        }\r\n      }\r\n    }\r\n\r\n    if (isAutoAllowedBash(command)) return undefined\r\n\r\n    const confirmed = await ctx.ui.confirm('Run bash command?', command)\r\n    if (confirmed) return undefined\r\n\r\n    return { block: true, reason: 'Bash command was not approved.' }\r\n  })\r\n}\r\n", "utf8");
     process.env.RAYMES_PI_EXTENSION = extensionPath;
   } catch (error) {
     console.error("[server] failed to materialize Pi policy:", error);
@@ -31885,8 +31498,12 @@ registerIpcHandlers(() => mockWin, {
   },
   stopWindowDragMonitoring: () => {
   },
+  updateTezbarHotkey: (h) => {
+    writeConfigPatch({ tezbarHotkey: h });
+    return { ok: true, accelerator: h };
+  },
   updateRaymesHotkey: (h) => {
-    writeConfigPatch({ raymesHotkey: h });
+    writeConfigPatch({ tezbarHotkey: h });
     return { ok: true, accelerator: h };
   }
 });
@@ -31987,5 +31604,5 @@ function cleanup() {
 }
 process.on("SIGINT", cleanup);
 process.on("SIGTERM", cleanup);
-console.error("[server] Raymes TS background runner started successfully via stdin/stdout IPC.");
+console.error("[server] Tezbar TS background runner started successfully via stdin/stdout IPC.");
 //# sourceMappingURL=main.js.map

@@ -24,7 +24,7 @@ function buildNativeCommandDocuments(): IndexedDocument[] {
     }))
 }
 
-function buildRaymesSurfaceDocuments(): IndexedDocument[] {
+function buildTezbarSurfaceDocuments(): IndexedDocument[] {
   const now = Date.now()
   const extensionsSurfaceTitle = process.platform === 'win32' ? 'Loved Extensions' : 'Extensions Store'
   const extensionsSurfaceSubtitle =
@@ -93,6 +93,6 @@ function buildRaymesSurfaceDocuments(): IndexedDocument[] {
 export const commandsProvider: SearchProvider = {
   providerId: 'commands',
   async buildDocuments(): Promise<IndexedDocument[]> {
-    return [...buildRaymesSurfaceDocuments(), ...buildNativeCommandDocuments()]
+    return [...buildTezbarSurfaceDocuments(), ...buildNativeCommandDocuments()]
   },
 }

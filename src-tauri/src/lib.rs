@@ -2933,7 +2933,7 @@ fn window_set_content_height(
 }
 
 #[tauri::command]
-fn update_raymes_shortcut(app: AppHandle, shortcut_str: String) -> Result<(), String> {
+fn update_tezbar_shortcut(app: AppHandle, shortcut_str: String) -> Result<(), String> {
     let clean_shortcut = shortcut_str
         .replace("Option", "Alt")
         .replace("CommandOrControl", "Super")
@@ -2957,6 +2957,11 @@ fn update_raymes_shortcut(app: AppHandle, shortcut_str: String) -> Result<(), St
         .register(shortcut)
         .map_err(|e| format!("Failed to register shortcut: {:?}", e))?;
     Ok(())
+}
+
+#[tauri::command]
+fn update_raymes_shortcut(app: AppHandle, shortcut_str: String) -> Result<(), String> {
+    update_tezbar_shortcut(app, shortcut_str)
 }
 
 #[tauri::command]
@@ -3297,6 +3302,7 @@ pub fn run() {
             set_suppress_blur_hide,
             set_quick_look_window_state,
             window_set_content_height,
+            update_tezbar_shortcut,
             update_raymes_shortcut,
             native_input::move_mouse,
             native_input::click,

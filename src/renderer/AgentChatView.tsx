@@ -30,7 +30,7 @@ import {
   type ChatTurn,
 } from '../shared/chat'
 import type { AiChatBoot } from '../shared/aiChatSurface'
-import { RAYMES_AI_NEW_CHAT_EVENT } from '../shared/aiChatSurface'
+import { TEZBAR_AI_NEW_CHAT_EVENT } from '../shared/aiChatSurface'
 import { formatLlmErrorMessage } from '../shared/llmErrors'
 import type { AiProviderModel, LlmConfigRecord, ProviderId } from '../shared/llmConfig'
 import { Hint, HintBar, Kbd, cx } from './ui/primitives'
@@ -960,8 +960,8 @@ export default function AgentChatView({
     const onNewChat = (): void => {
       startNewChat()
     }
-    window.addEventListener(RAYMES_AI_NEW_CHAT_EVENT, onNewChat)
-    return () => window.removeEventListener(RAYMES_AI_NEW_CHAT_EVENT, onNewChat)
+    window.addEventListener(TEZBAR_AI_NEW_CHAT_EVENT, onNewChat)
+    return () => window.removeEventListener(TEZBAR_AI_NEW_CHAT_EVENT, onNewChat)
   }, [startNewChat])
 
   useEffect(() => {

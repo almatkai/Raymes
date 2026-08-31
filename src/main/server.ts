@@ -84,8 +84,12 @@ const tauriIpcMain = ipcMain as typeof ipcMain & {
 registerIpcHandlers(() => mockWin, {
   startWindowDragMonitoring: () => {},
   stopWindowDragMonitoring: () => {},
+  updateTezbarHotkey: (h: string) => {
+    writeConfigPatch({ tezbarHotkey: h })
+    return { ok: true, accelerator: h }
+  },
   updateRaymesHotkey: (h: string) => {
-    writeConfigPatch({ raymesHotkey: h })
+    writeConfigPatch({ tezbarHotkey: h })
     return { ok: true, accelerator: h }
   },
 })
@@ -202,4 +206,4 @@ function cleanup(): void {
 process.on('SIGINT', cleanup)
 process.on('SIGTERM', cleanup)
 
-console.error('[server] Raymes TS background runner started successfully via stdin/stdout IPC.')
+console.error('[server] Tezbar TS background runner started successfully via stdin/stdout IPC.')

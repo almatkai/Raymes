@@ -70,6 +70,8 @@ export type LlmConfigRecord = {
   aiActionRequirePermission?: boolean
   aiActionRedactionEnabled?: boolean
   voiceSttModelId?: VoiceModelId
+  tezbarHotkey?: string
+  /** @deprecated Use `tezbarHotkey` instead. */
   raymesHotkey?: string
   /** Milliseconds to remember palette UI (e.g. Providers) after hide. Default 60000. Use 0 to always reset. */
   uiStateRetentionMs?: number

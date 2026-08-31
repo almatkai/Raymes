@@ -69,7 +69,7 @@ const SETTINGS_TABS: Array<{ id: SettingsTab; label: string; icon: string }> = [
   { id: 'advanced', label: 'Advanced', icon: 'tool' },
 ]
 
-const DEFAULT_RAYMES_HOTKEY = navigator.platform.includes('Win') ? 'Control+Space' : 'Alt+Space'
+const DEFAULT_TEZBAR_HOTKEY = navigator.platform.includes('Win') ? 'Control+Space' : 'Alt+Space'
 
 const KNOWLEDGE_DEPTH_OPTIONS: Array<{
   id: KnowledgeDepth
@@ -655,7 +655,7 @@ export default function SettingsView({
     useState<VoiceModelId>('moonshine-base-en')
   const [activeTab, setActiveTab] = useState<SettingsTab>(initialTab)
   const [msg, setMsg] = useState<{ tone: 'success' | 'error'; text: string } | null>(null)
-  const [raymesHotkey, setRaymesHotkeyState] = useState(DEFAULT_RAYMES_HOTKEY)
+  const [tezbarHotkey, setTezbarHotkeyState] = useState(DEFAULT_TEZBAR_HOTKEY)
   const [hotkeyRecording, setHotkeyRecording] = useState(false)
   const [hotkeyMessage, setHotkeyMessage] = useState<{
     tone: 'success' | 'error'
@@ -859,12 +859,12 @@ export default function SettingsView({
 
     setSafetyDryRunState(Boolean(dryRun))
     setVoiceModes(modes)
-    const savedHotkey = c.raymesHotkey ?? DEFAULT_RAYMES_HOTKEY
+    const savedHotkey = c.tezbarHotkey ?? c.raymesHotkey ?? DEFAULT_TEZBAR_HOTKEY
     if (isValidStoredAccelerator(savedHotkey)) {
-      setRaymesHotkeyState(savedHotkey)
+      setTezbarHotkeyState(savedHotkey)
     } else {
-      setRaymesHotkeyState(DEFAULT_RAYMES_HOTKEY)
-      void window.tezbar.setLlmConfig({ raymesHotkey: DEFAULT_RAYMES_HOTKEY })
+      setTezbarHotkeyState(DEFAULT_TEZBAR_HOTKEY)
+      void window.tezbar.setLlmConfig({ tezbarHotkey: DEFAULT_TEZBAR_HOTKEY })
     }
     void loadAiModels(provider)
   }, [loadAiModels, refreshVoiceModels])
@@ -925,9 +925,9 @@ export default function SettingsView({
 
   const saveHotkey = useCallback(async (accelerator: string) => {
     try {
-      const result = await window.tezbar.setLlmConfig({ raymesHotkey: accelerator })
+      const result = await window.tezbar.setLlmConfig({ tezbarHotkey: accelerator })
       if (!result || typeof result !== 'object' || !('ok' in result)) {
-        setRaymesHotkeyState(accelerator)
+        setTezbarHotkeyState(accelerator)
         setHotkeyRecording(false)
         setHotkeyMessage({
           tone: 'success',
@@ -935,7 +935,7 @@ export default function SettingsView({
         })
         return
       }
-      setRaymesHotkeyState(result.accelerator)
+      setTezbarHotkeyState(result.accelerator)
       setHotkeyRecording(false)
       setHotkeyMessage(
         result.ok
@@ -1577,7 +1577,7 @@ export default function SettingsView({
                       return
                     }
                     if (event.key === 'Backspace' || event.key === 'Delete') {
-                      void saveHotkey(DEFAULT_RAYMES_HOTKEY)
+                      void saveHotkey(DEFAULT_TEZBAR_HOTKEY)
                       return
                     }
                     const accelerator = acceleratorFromKeyEvent(event)
@@ -1591,7 +1591,7 @@ export default function SettingsView({
                       : 'border-white/[0.08] bg-white/[0.10] text-ink-1 hover:bg-white/[0.14]'
                   )}
                 >
-                  {hotkeyRecording ? 'Press shortcut…' : hotkeyDisplay(raymesHotkey)}
+                  {hotkeyRecording ? 'Press shortcut…' : hotkeyDisplay(tezbarHotkey)}
                 </button>
                 {hotkeyMessage ? (
                   <p
@@ -2228,7 +2228,7 @@ export default function SettingsView({
               >
                 <div className="flex items-center gap-2.5">
                   <span className="rounded-tezbar-chip border border-white/10 bg-white/[0.05] px-2.5 py-1 font-mono text-[12px] font-semibold text-ink-1">
-                    {hotkeyDisplay(raymesHotkey)}
+                    {hotkeyDisplay(tezbarHotkey)}
                   </span>
                   <Button variant="quiet" onClick={() => setActiveTab('general')}>
                     Change shortcut

@@ -424,7 +424,7 @@ describe('extension runtime list pagination', () => {
     }
   })
 
-  it('bridges ScreenOCR Swift imports to the packaged helper', async () => {
+  it.runIf(process.platform !== 'win32')('bridges ScreenOCR Swift imports to the packaged helper', async () => {
     const extensionRoot = mkdtempSync(join(tmpdir(), 'raymes-screenocr-extension-'))
     const helperPath = join(extensionRoot, 'screenocr-helper')
     mkdirSync(join(extensionRoot, '.sc-build'))
@@ -580,7 +580,7 @@ describe('extension runtime list pagination', () => {
     }
   })
 
-  it('supports form, frecency, Google OAuth, and SQL utility APIs', async () => {
+  it.runIf(process.platform !== 'win32')('supports form, frecency, Google OAuth, and SQL utility APIs', async () => {
     const extensionRoot = mkdtempSync(join(tmpdir(), 'raymes-utils-extension-'))
     const databasePath = join(extensionRoot, 'fixture.sqlite')
     mkdirSync(join(extensionRoot, 'src'))

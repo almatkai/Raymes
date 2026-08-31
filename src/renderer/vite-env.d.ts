@@ -1,10 +1,10 @@
 /// <reference types="vite/client" />
 
-import type { RaymesApi } from '../shared/desktop-api'
+import type { TezbarApi } from '../shared/desktop-api'
 
 declare global {
   interface Window {
-    tezbar: RaymesApi
+    tezbar: TezbarApi
     __TEZBAR_WINDOW_LABEL__?: string
   }
 }

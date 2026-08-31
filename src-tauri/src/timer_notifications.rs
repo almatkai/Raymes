@@ -15,9 +15,9 @@ use std::process::{Command, Stdio};
 use std::sync::OnceLock;
 use tauri::{AppHandle, Emitter, Manager};
 
-const TIMER_CATEGORY: &str = "raymes.timer-complete";
-const STOP_ACTION: &str = "raymes.timer.stop";
-const SHOW_ACTION: &str = "raymes.timer.show";
+const TIMER_CATEGORY: &str = "tezbar.timer-complete";
+const STOP_ACTION: &str = "tezbar.timer.stop";
+const SHOW_ACTION: &str = "tezbar.timer.show";
 
 static APP_HANDLE: OnceLock<AppHandle> = OnceLock::new();
 
@@ -60,7 +60,7 @@ end run"#;
 define_class!(
     // SAFETY: NSObject has no subclassing requirements and this class has no ivars.
     #[unsafe(super = NSObject)]
-    #[name = "RaymesTimerNotificationDelegate"]
+    #[name = "TezbarTimerNotificationDelegate"]
     struct TimerNotificationDelegate;
 
     // SAFETY: NSObjectProtocol has no additional safety requirements.

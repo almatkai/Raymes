@@ -11,7 +11,7 @@ use tauri::{AppHandle, Emitter, Manager};
 use tauri_plugin_updater::{Update, UpdaterExt};
 
 /// GitHub repository that publishes Tezbar releases ("owner/repo").
-const GITHUB_REPO: &str = "almatkai/Raymes";
+const GITHUB_REPO: &str = "almatkai/Tezbar";
 
 /// Mirrors the renderer's `AppUpdateStatus` union (`src/shared/updater.ts`).
 #[derive(Clone, Debug, Serialize)]

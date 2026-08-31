@@ -472,20 +472,6 @@ export class SearchIndexDatabase {
       .sort((a, b) => b.lexical - a.lexical)
       .slice(0, candidateLimit)
 
-    if (trimmed === 'process kill' || trimmed === 'timer stop' || trimmed === 'stop timer') {
-      const lines: string[] = []
-      lines.push(
-        `[Search DEBUG] query="${trimmed}" ftsQuery="${ftsQuery}" FTS rows=${rows.length} mapped=${mapped.length} fuzzyRows=${fuzzyRows.length}`
-      )
-      for (const r of result.slice(0, 10)) {
-        lines.push(`  [DEBUG] lex=${r.lexical.toFixed(3)} cat=${r.category} title="${r.title}"`)
-      }
-      try {
-        const fs = require('fs')
-        fs.appendFileSync('/tmp/search_debug.log', lines.join('\n') + '\n\n')
-      } catch {}
-    }
-
     return result
   }
 

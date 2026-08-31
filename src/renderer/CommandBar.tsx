@@ -29,7 +29,7 @@ import { buildColorConversionResults } from './colorConverter'
 import { parseCurrencyQuery } from './currency/parseCurrencyQuery'
 import type { ChatSessionSummary } from '../shared/chat'
 import type { AiChatBoot } from '../shared/aiChatSurface'
-import { RAYMES_QUICK_NOTE_SHORTCUT_EVENT } from '../shared/aiChatSurface'
+import { TEZBAR_QUICK_NOTE_SHORTCUT_EVENT } from '../shared/aiChatSurface'
 import {
   compactTerminalPath,
   isAbsoluteTerminalPath,
@@ -1854,8 +1854,8 @@ export default function CommandBar({
           showActionMsg('Could not save quick note')
         })
     }
-    window.addEventListener(RAYMES_QUICK_NOTE_SHORTCUT_EVENT, onQuickNoteShortcut)
-    return () => window.removeEventListener(RAYMES_QUICK_NOTE_SHORTCUT_EVENT, onQuickNoteShortcut)
+    window.addEventListener(TEZBAR_QUICK_NOTE_SHORTCUT_EVENT, onQuickNoteShortcut)
+    return () => window.removeEventListener(TEZBAR_QUICK_NOTE_SHORTCUT_EVENT, onQuickNoteShortcut)
   }, [onOpenAiChat])
 
   // Hold-to-Speak pipeline: captures mic audio via MediaRecorder, resamples

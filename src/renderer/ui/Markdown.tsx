@@ -138,10 +138,10 @@ function MarkdownView({
     if (!streaming) {
       const pres = root.querySelectorAll('pre')
       pres.forEach((pre) => {
-        if (pre.dataset.raymesDecorated === '1') return
+        if (pre.dataset.tezbarDecorated === '1' || pre.dataset.raymesDecorated === '1') return
         const codeEl = pre.querySelector('code')
         if (!codeEl) return
-        pre.dataset.raymesDecorated = '1'
+        pre.dataset.tezbarDecorated = '1'
 
         // Derive language from "language-xxx" class.
         const langClass = Array.from(codeEl.classList).find((c) => c.startsWith('language-'))

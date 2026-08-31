@@ -7,7 +7,7 @@
     "moduleResolution": "bundler",
     "baseUrl": ".",
     "paths": {
-      "@tezbar/desktop-runtime": ["src/main/desktop-runtime.ts"]
+      "@tezbar/desktop-runtime": ["./src/main/desktop-runtime.ts"]
     },
     "resolveJsonModule": true,
     "isolatedModules": true,

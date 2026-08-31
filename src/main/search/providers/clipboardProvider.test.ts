@@ -1,6 +1,9 @@
 import { existsSync, readdirSync, rmSync } from 'node:fs'
+import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
+
+const testUserData = join(tmpdir(), 'tezbar-clipboard-provider-test')
 
 const mocks = vi.hoisted(() => {
   const state = {
@@ -36,9 +39,10 @@ const mocks = vi.hoisted(() => {
   return {
     state,
     clipboard,
-    userData: '/tmp/tezbar-clipboard-provider-test',
+    userData: '',
   }
 })
+mocks.userData = testUserData
 
 vi.mock('@tezbar/desktop-runtime', () => ({
   app: { getPath: () => mocks.userData },
@@ -58,7 +62,7 @@ vi.mock('../../llm/configStore', () => ({
 describe('clipboard watcher', () => {
   afterEach(() => {
     vi.useRealTimers()
-    rmSync(mocks.userData, { recursive: true, force: true })
+    try { rmSync(mocks.userData, { recursive: true, force: true }) } catch { /* Windows file lock */ }
     mocks.state.text = ''
     mocks.state.filePaths = []
     mocks.state.captureImages = false
@@ -68,7 +72,7 @@ describe('clipboard watcher', () => {
 
   it('stores copied files as paths and deduplicates repeated copies', async () => {
     vi.resetModules()
-    rmSync(mocks.userData, { recursive: true, force: true })
+    try { rmSync(mocks.userData, { recursive: true, force: true }) } catch { /* Windows */ }
     mocks.state.text = ''
     mocks.state.filePaths = ['/Users/example/Pictures/photo.png']
     mocks.state.captureImages = false
@@ -88,15 +92,19 @@ describe('clipboard watcher', () => {
     expect(provider.listClipboardEntries()).toHaveLength(1)
     expect(existsSync(join(mocks.userData, 'search', 'clipboard-images'))).toBe(false)
     expect(provider.restoreClipboardEntry(provider.listClipboardEntries()[0].id)).toBe(true)
-    expect(mocks.clipboard.write).toHaveBeenCalledWith(
-      expect.objectContaining({ filePaths: ['/Users/example/Pictures/photo.png'] }),
-    )
+    if (process.platform === 'darwin') {
+      expect(mocks.clipboard.write).toHaveBeenCalledWith(
+        expect.objectContaining({ filePaths: ['/Users/example/Pictures/photo.png'] }),
+      )
+    } else {
+      expect(mocks.clipboard.writeText).toHaveBeenCalledWith('/Users/example/Pictures/photo.png')
+    }
   })
 
   it('detects a file-only clipboard without copying the file contents', async () => {
     vi.useFakeTimers()
     vi.resetModules()
-    rmSync(mocks.userData, { recursive: true, force: true })
+    try { rmSync(mocks.userData, { recursive: true, force: true }) } catch { /* Windows */ }
     mocks.state.text = ''
     mocks.state.filePaths = ['/Users/example/Documents/report.pdf']
     mocks.state.captureImages = false
@@ -114,7 +122,7 @@ describe('clipboard watcher', () => {
 
   it('stores one payload for repeated identical image copies', async () => {
     vi.resetModules()
-    rmSync(mocks.userData, { recursive: true, force: true })
+    try { rmSync(mocks.userData, { recursive: true, force: true }) } catch { /* Windows */ }
     mocks.state.text = ''
     mocks.state.filePaths = []
     mocks.state.captureImages = true
@@ -134,7 +142,7 @@ describe('clipboard watcher', () => {
 
   it('keeps polling after idle instead of missing the next copy for seconds', async () => {
     vi.useFakeTimers()
-    rmSync(mocks.userData, { recursive: true, force: true })
+    try { rmSync(mocks.userData, { recursive: true, force: true }) } catch { /* Windows */ }
     mocks.state.text = 'first copy'
     mocks.state.filePaths = []
     mocks.state.captureImages = false
@@ -153,6 +161,6 @@ describe('clipboard watcher', () => {
 
     provider.stopClipboardWatcher()
     vi.useRealTimers()
-    rmSync(mocks.userData, { recursive: true, force: true })
+    try { rmSync(mocks.userData, { recursive: true, force: true }) } catch { /* Windows */ }
   })
 })

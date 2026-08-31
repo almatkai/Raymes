@@ -13,7 +13,7 @@ beforeAll(() => {
 afterAll(() => {
   if (previousAppDataDirectory === undefined) delete process.env.APPDATA_DIR
   else process.env.APPDATA_DIR = previousAppDataDirectory
-  rmSync(appDataDirectory, { recursive: true, force: true })
+  try { rmSync(appDataDirectory, { recursive: true, force: true }) } catch { /* Windows file lock */ }
 })
 
 describe('chat session store', () => {

@@ -1039,11 +1039,11 @@ function extensionFromMime(mime: string | undefined): string {
 /** Locate a usable whisper.cpp ggml model file without running the
  *  transcription — so we can surface a good error message early.
  *  Priority order:
- *    1. user-specified `$RAYMES_WHISPER_MODEL`
+ *    1. user-specified `$TEZBAR_WHISPER_MODEL` / `$RAYMES_WHISPER_MODEL`
  *    2. files named `ggml-*.bin` inside userData/voice-models
  *    3. homebrew install location on macOS */
 async function findWhisperCliModel(): Promise<string | null> {
-  const envPath = process.env['RAYMES_WHISPER_MODEL']
+  const envPath = process.env['TEZBAR_WHISPER_MODEL'] || process.env['RAYMES_WHISPER_MODEL']
   if (envPath && existsSync(envPath)) return envPath
 
   const selected = readSelectedModelId()
@@ -1083,7 +1083,11 @@ function envPositiveInt(name: string): number | null {
 }
 
 function whisperThreadCount(): number {
-  return envPositiveInt('RAYMES_WHISPER_THREADS') ?? Math.max(4, Math.min(cpus().length, 12))
+  return (
+    envPositiveInt('TEZBAR_WHISPER_THREADS') ??
+    envPositiveInt('RAYMES_WHISPER_THREADS') ??
+    Math.max(4, Math.min(cpus().length, 12))
+  )
 }
 
 async function runWhisperCli(

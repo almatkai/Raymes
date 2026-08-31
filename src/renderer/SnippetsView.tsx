@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { RAYMES_NEW_SNIPPET_EVENT } from '../shared/snippetEvents'
+import { TEZBAR_NEW_SNIPPET_EVENT } from '../shared/snippetEvents'
 import type { SnippetListRow } from '../shared/snippets'
 import { GlideList } from './ui/GlideList'
 import { Button, FieldLabel, Hint, HintBar, Kbd, Message, TextArea, TextField, ViewHeader } from './ui/primitives'
@@ -55,8 +55,8 @@ export default function SnippetsView({ onBack }: { onBack: () => void }): JSX.El
       setEditor('create')
       setMsg(null)
     }
-    window.addEventListener(RAYMES_NEW_SNIPPET_EVENT, onNew)
-    return () => window.removeEventListener(RAYMES_NEW_SNIPPET_EVENT, onNew)
+    window.addEventListener(TEZBAR_NEW_SNIPPET_EVENT, onNew)
+    return () => window.removeEventListener(TEZBAR_NEW_SNIPPET_EVENT, onNew)
   }, [])
 
   const filtered = useMemo(() => {

@@ -1545,7 +1545,7 @@ function createRaycastApiShim(session: RuntimeSession): Record<string, unknown> 
     }
 
     async authorize(): Promise<never> {
-      throw new Error('Interactive OAuth authorization is not yet available in Raymes')
+      throw new Error('Interactive OAuth authorization is not yet available in Tezbar')
     }
   }
 
@@ -2020,9 +2020,9 @@ function createRaycastApiShim(session: RuntimeSession): Record<string, unknown> 
         })
         const name = stdout.trim()
         if (name) return { name, path: `/Applications/${name}.app` }
-        return { name: 'Raymes', path: process.execPath }
+        return { name: 'Tezbar', path: process.execPath }
       } catch {
-        return { name: 'Raymes', path: process.execPath }
+        return { name: 'Tezbar', path: process.execPath }
       }
     },
     getDefaultApplication: async (): Promise<{ name: string; path: string } | null> => {

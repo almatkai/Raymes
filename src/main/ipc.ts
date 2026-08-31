@@ -60,14 +60,13 @@ import {
   setSafetyDryRun,
   writeConfigPatch,
   getCommandHotkeys,
-  setCommandHotkeys,
   getCommandAliases,
   setCommandAliases,
   getDisabledCommands,
   setDisabledCommands,
   getCommandSurfaceTimeoutMs,
   getExtensionRuntimeTimeoutMs,
-  getRaymesHotkey,
+  getTezbarHotkey,
 } from './llm/configStore'
 import { getInstalledExtensionsSettingsSchema } from './extension-builder'
 import {
@@ -294,6 +293,11 @@ type IpcControls = {
   stopWindowDragMonitoring: (win: BrowserWindow) => void
   showCommandBar?: () => void
   hideCommandBar?: () => void
+  updateTezbarHotkey?: (accelerator: string) => {
+    ok: boolean
+    accelerator: string
+    error?: string
+  }
   updateRaymesHotkey?: (accelerator: string) => {
     ok: boolean
     accelerator: string
@@ -633,7 +637,8 @@ export function registerIpcHandlers(
     ...LLM_DEFAULTS,
     ...readLLMConfig(),
     ...readRawConfig(),
-    raymesHotkey: getRaymesHotkey(),
+    tezbarHotkey: getTezbarHotkey(),
+    raymesHotkey: getTezbarHotkey(),
     uiStateRetentionMs: getUiStateRetentionMs(),
     extensionRuntimeTimeoutMs: getExtensionRuntimeTimeoutMs(),
     aiModeTimeoutMs: getCommandSurfaceTimeoutMs('aiModeTimeoutMs'),
@@ -643,7 +648,13 @@ export function registerIpcHandlers(
   ipcMain.handle('llm-config-set', async (_event, patch: unknown) => {
     if (!patch || typeof patch !== 'object') return
     const configPatch = { ...(patch as Record<string, unknown>) }
-    const requestedHotkey = configPatch.raymesHotkey
+    const requestedHotkey =
+      typeof configPatch.tezbarHotkey === 'string'
+        ? configPatch.tezbarHotkey
+        : typeof configPatch.raymesHotkey === 'string'
+          ? configPatch.raymesHotkey
+          : undefined
+    delete configPatch.tezbarHotkey
     delete configPatch.raymesHotkey
 
     // Notify every renderer that the LLM config changed, so views that cache
@@ -658,8 +669,9 @@ export function registerIpcHandlers(
       }
     }
 
-    if (typeof requestedHotkey === 'string' && controls?.updateRaymesHotkey) {
-      const result = controls.updateRaymesHotkey(requestedHotkey)
+    const updater = controls?.updateTezbarHotkey ?? controls?.updateRaymesHotkey
+    if (typeof requestedHotkey === 'string' && updater) {
+      const result = updater(requestedHotkey)
       if (!result.ok) return result
       if (Object.keys(configPatch).length > 0) writeConfigPatch(configPatch)
       invalidateProviderCache()

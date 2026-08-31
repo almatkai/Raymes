@@ -3,13 +3,15 @@ import { build } from 'esbuild'
 import {
   chmodSync,
   copyFileSync,
-  cpSync,
   existsSync,
+  mkdirSync,
+  readdirSync,
   readFileSync,
   realpathSync,
   renameSync,
 } from 'node:fs'
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
+import { fileURLToPath } from 'node:url'
 import { getLoadablePath } from 'sqlite-vec'
 
 function replaceGeneratedFile(source: string, destination: string): void {
@@ -31,19 +33,30 @@ function copyFileIfChanged(source: string, destination: string): void {
   copyFileSync(source, destination)
 }
 
+function copyDirRecursive(source: string, destination: string): void {
+  mkdirSync(destination, { recursive: true })
+  const entries = readdirSync(source, { withFileTypes: true })
+  for (const entry of entries) {
+    const srcPath = join(source, entry.name)
+    const dstPath = join(destination, entry.name)
+    if (entry.isDirectory()) {
+      copyDirRecursive(srcPath, dstPath)
+    } else {
+      copyFileSync(srcPath, dstPath)
+    }
+  }
+}
+
 function copyRuntimePackage(source: string, destination: string, label: string): void {
   if (!existsSync(source)) {
     throw new Error(`Missing ${label} package at ${source}`)
   }
-  cpSync(realpathSync(source), destination, {
-    recursive: true,
-    dereference: true,
-    force: true,
-  })
+  const realSource = realpathSync(source)
+  copyDirRecursive(realSource, destination)
 }
 
 async function runBuild(): Promise<void> {
-  const root = join(__dirname, '..')
+  const root = join(dirname(fileURLToPath(import.meta.url)), '..')
   const outputDirectory = join(root, 'dist-backend')
 
   console.log('Building TypeScript backend runner with esbuild...')
@@ -122,6 +135,6 @@ async function runBuild(): Promise<void> {
 }
 
 runBuild().catch((err) => {
-  console.error('Failed to build backend runner:', err)
+  console.error('Failed to build backend runner:', err && (err.stack || err.message || err))
   process.exit(1)
 })

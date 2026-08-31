@@ -1,9 +1,9 @@
 import React, { Suspense, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { tryConsumeCommandSurfaceEscape } from './escapeGate'
 import CommandBar from './CommandBar'
-import { RAYMES_NEW_SNIPPET_EVENT } from '../shared/snippetEvents'
+import { TEZBAR_NEW_SNIPPET_EVENT } from '../shared/snippetEvents'
 import type { AiChatBoot } from '../shared/aiChatSurface'
-import { RAYMES_AI_NEW_CHAT_EVENT, RAYMES_QUICK_NOTE_SHORTCUT_EVENT } from '../shared/aiChatSurface'
+import { TEZBAR_AI_NEW_CHAT_EVENT, TEZBAR_QUICK_NOTE_SHORTCUT_EVENT } from '../shared/aiChatSurface'
 import type { ExtensionRunCommandResult } from '../shared/extensionRuntime'
 import { DEFAULT_EXTENSION_RUNTIME_TIMEOUT_MS } from '../shared/llmConfig'
 import type { TerminalSessionsAction } from '../shared/terminal'
@@ -507,14 +507,14 @@ function LauncherApp(): JSX.Element {
         e.stopPropagation()
         const s = surfaceRef.current
         if (s === 'ai-chat') {
-          window.dispatchEvent(new Event(RAYMES_AI_NEW_CHAT_EVENT))
+          window.dispatchEvent(new Event(TEZBAR_AI_NEW_CHAT_EVENT))
           return
         }
         if (s === 'snippets') {
-          window.dispatchEvent(new Event(RAYMES_NEW_SNIPPET_EVENT))
+          window.dispatchEvent(new Event(TEZBAR_NEW_SNIPPET_EVENT))
           return
         }
-        window.dispatchEvent(new Event(RAYMES_QUICK_NOTE_SHORTCUT_EVENT))
+        window.dispatchEvent(new Event(TEZBAR_QUICK_NOTE_SHORTCUT_EVENT))
       }
     }
     window.addEventListener('keydown', onKey, true)

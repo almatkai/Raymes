@@ -18,7 +18,7 @@ describe('search index hot usage window', () => {
   afterEach(() => {
     if (previousAppDataDir === undefined) delete process.env.APPDATA_DIR
     else process.env.APPDATA_DIR = previousAppDataDir
-    rmSync(appDataDir, { recursive: true, force: true })
+    try { rmSync(appDataDir, { recursive: true, force: true }) } catch { /* Windows file lock */ }
   })
 
   it('persists each successful action and exposes its five-minute use count', async () => {

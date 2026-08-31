@@ -13,7 +13,7 @@ export type AppUpdateStatus =
   | { kind: 'ready'; version: string }
   | { kind: 'error'; message: string }
 
-export const RELEASES_PAGE_URL = 'https://github.com/almatkai/Raymes/releases'
+export const RELEASES_PAGE_URL = 'https://github.com/almatkai/Tezbar/releases'
 
 export const LAST_UPDATE_CHECK_KEY = 'tezbar:last-update-check'
 export const UPDATE_CHECK_INTERVAL_MS = 24 * 60 * 60 * 1000

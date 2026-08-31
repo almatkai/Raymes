@@ -261,13 +261,13 @@ mod platform {
     pub async fn screenshot(window: WebviewWindow) -> Result<Vec<u8>, String> {
         window
             .set_content_protected(true)
-            .map_err(|e| format!("failed to protect Raymes window: {e}"))?;
+            .map_err(|e| format!("failed to protect Tezbar window: {e}"))?;
         tokio::time::sleep(std::time::Duration::from_millis(120)).await;
 
         let result = capture_display();
         let restore_result = window
             .set_content_protected(false)
-            .map_err(|e| format!("failed to restore Raymes window capture setting: {e}"));
+            .map_err(|e| format!("failed to restore Tezbar window capture setting: {e}"));
 
         match (result, restore_result) {
             (Ok(bytes), Ok(())) => Ok(bytes),

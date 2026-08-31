@@ -751,12 +751,7 @@ export async function searchStoreExtensions(query: string): Promise<ExtensionMan
     return catalog.sort((a, b) => (b.downloadCount ?? 0) - (a.downloadCount ?? 0))
   }
 
-  // 1. Initial scoring using the heuristic
-  const scored = catalog
-    .map((item) => ({ item, score: scoreMatch(item, q) }))
-    .filter((entry) => entry.score > 0)
-
-  // 2. Fuzzy matching using Fuse as a secondary signal
+  // Fuzzy matching using Fuse as a secondary signal
   const fuse = new Fuse(catalog, {
     keys: [
       { name: 'name', weight: 0.7 },
